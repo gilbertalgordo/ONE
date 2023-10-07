@@ -19,3 +19,5 @@ Use this section to tell people how to report a vulnerability.
 Tell them where to go, how often they can expect to get an update on a
 reported vulnerability, what to expect if the vulnerability is accepted or
 declined, etc.
+# Pay Transparency
+https://acrobat.adobe.com/link/track?uri=urn:aaid:scds:US:3904d473-0113-3d87-82e8-1c8faf4c8a8d
