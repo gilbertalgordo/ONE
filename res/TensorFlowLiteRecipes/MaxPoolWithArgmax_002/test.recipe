@@ -14,7 +14,7 @@ operand {
   shape { dim: 1 dim: 8 dim: 8 dim: 2 }
 }
 operation {
-  type: "MaxPoolWithArgmax"
+  type: "Custom"
   input: "ifm"
   output: "ofm"
   output: "argmax"
@@ -27,6 +27,7 @@ operation {
     output_type: INT64
     include_batch_in_index: false
   }
+  custom_code: "MaxPoolWithArgmax"
 }
 input: "ifm"
 output: "ofm"

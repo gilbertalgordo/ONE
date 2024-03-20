@@ -78,7 +78,7 @@ luci::CircleQuantize *create_quantize_op(luci::CircleNode *node, loco::DataType 
   auto qtype = luci::activation_qtype(node);
   if (use_predefined_values(qtype))
   {
-    quantize->quantparam(luci::make_predefined_qparam(qtype, out_type));
+    quantize->quantparam(luci::make_predefined_qparam(qtype, out_type, node->quantparam()));
     return quantize;
   }
 
@@ -232,16 +232,25 @@ private:
   }
 
 // INPUT_NAME1 and INPUT_NAME2 are the only activations of NODE
-#define INSERT_QUANTIZE_TO_BINARY_OP(NODE, INPUT_NAME1, INPUT_NAME2)       \
-  void visit(NODE *node)                                                   \
-  {                                                                        \
-    if (auto input1_quant = create_in_quantize(node->INPUT_NAME1(), node)) \
-      node->INPUT_NAME1(input1_quant);                                     \
-                                                                           \
-    if (auto input2_quant = create_in_quantize(node->INPUT_NAME2(), node)) \
-      node->INPUT_NAME2(input2_quant);                                     \
-                                                                           \
-    insert_out_quantize(node);                                             \
+#define INSERT_QUANTIZE_TO_BINARY_OP(NODE, INPUT_NAME1, INPUT_NAME2)         \
+  void visit(NODE *node)                                                     \
+  {                                                                          \
+    if (node->INPUT_NAME1() == node->INPUT_NAME2())                          \
+    {                                                                        \
+      if (auto input1_quant = create_in_quantize(node->INPUT_NAME1(), node)) \
+      {                                                                      \
+        node->INPUT_NAME1(input1_quant);                                     \
+        node->INPUT_NAME2(input1_quant);                                     \
+      }                                                                      \
+      return;                                                                \
+    }                                                                        \
+    if (auto input1_quant = create_in_quantize(node->INPUT_NAME1(), node))   \
+      node->INPUT_NAME1(input1_quant);                                       \
+                                                                             \
+    if (auto input2_quant = create_in_quantize(node->INPUT_NAME2(), node))   \
+      node->INPUT_NAME2(input2_quant);                                       \
+                                                                             \
+    insert_out_quantize(node);                                               \
   }
 
   // Default behavior (NYI)
@@ -700,15 +709,18 @@ bool QuantizeWithMinMaxPass::run(loco::Graph *g)
     phase_runner.run(phase);
   }
 
-  // Remove min/max values
-  for (auto node : loco::active_nodes(loco::output_nodes(g)))
+  if (not _ctx->save_min_max)
   {
-    auto circle_node = loco::must_cast<luci::CircleNode *>(node);
-    if (auto qparam = circle_node->quantparam())
+    // Remove min/max values
+    for (auto node : loco::all_nodes(g))
     {
-      warn_accuracy_with_range(circle_node);
-      qparam->min.clear();
-      qparam->max.clear();
+      auto circle_node = loco::must_cast<luci::CircleNode *>(node);
+      if (auto qparam = circle_node->quantparam())
+      {
+        warn_accuracy_with_range(circle_node);
+        qparam->min.clear();
+        qparam->max.clear();
+      }
     }
   }
 

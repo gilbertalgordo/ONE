@@ -26,24 +26,41 @@ luci::CircleConst *cast_const(luci::CircleConst *node, loco::DataType from_dtype
 {
   assert(node->dtype() == from_dtype);
 
+  enum CAST_TYPES
+  {
+    CAST_NONE = 0,
+    CAST_S64_S32,
+  };
+
+  CAST_TYPES cast_type = CAST_NONE;
+  if (from_dtype == loco::DataType::S64)
+  {
+    if (to_dtype == loco::DataType::S32)
+      cast_type = CAST_S64_S32;
+  }
+  // TODO: Support more data types
+  if (cast_type == CAST_NONE)
+    return nullptr;
+
   auto name = node->name();
   assert(name.length() > 0);
+
   auto constant = node->graph()->nodes()->create<luci::CircleConst>();
   constant->dtype(to_dtype);
   constant->rank(node->rank());
   uint32_t num_elems = 1;
+
   for (uint32_t i = 0; i < node->rank(); i++)
   {
     constant->dim(i).set(node->dim(i).value());
     num_elems *= node->dim(i).value();
   }
-
   constant->shape_status(luci::ShapeStatus::VALID);
 
   // TODO: Support more data types
-  if (from_dtype == loco::DataType::S64)
+  switch (cast_type)
   {
-    if (to_dtype == loco::DataType::S32)
+    case CAST_S64_S32:
     {
       constant->size<loco::DataType::S32>(num_elems);
       for (uint32_t i = 0; i < num_elems; i++)
@@ -53,7 +70,8 @@ luci::CircleConst *cast_const(luci::CircleConst *node, loco::DataType from_dtype
       constant->name(name + "_S32");
       return constant;
     }
-    return nullptr;
+    default:
+      break;
   }
 
   return nullptr;

@@ -19,7 +19,7 @@
 
 #include "UntrainableOperationConverter.h"
 
-#include "compiler/train/TrainingInfo.h"
+#include "ir/train/TrainingInfo.h"
 
 namespace onert
 {
@@ -32,22 +32,26 @@ class TrainableOperationConverter : public UntrainableOperationConverter
 {
 public:
   TrainableOperationConverter(ir::train::TrainableGraph &trainable_graph,
-                              const compiler::train::TrainingInfo *training_info);
+                              const ir::train::TrainingInfo *training_info);
 
   using UntrainableOperationConverter::operator();
 
 private:
+  void visit(const ir::operation::BinaryArithmetic &) override;
   void visit(const ir::operation::Conv2D &) override;
+  void visit(const ir::operation::DepthwiseConv2D &) override;
   void visit(const ir::operation::ElementwiseActivation &) override;
   void visit(const ir::operation::FullyConnected &) override;
   void visit(const ir::operation::Loss &node) override;
+  void visit(const ir::operation::Pad &node) override;
   void visit(const ir::operation::Permute &node) override;
   void visit(const ir::operation::Pool2D &node) override;
+  void visit(const ir::operation::Reduce &node) override;
   void visit(const ir::operation::Reshape &) override;
   void visit(const ir::operation::Softmax &) override;
 
 private:
-  const compiler::train::TrainingInfo *_training_info;
+  const ir::train::TrainingInfo *_training_info;
 };
 
 } // namespace train

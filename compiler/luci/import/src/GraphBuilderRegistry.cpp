@@ -38,12 +38,14 @@ GraphBuilderRegistry::GraphBuilderRegistry()
   CIRCLE_NODE(BCQ_FULLY_CONNECTED, CircleBCQFullyConnectedGraphBuilder);                   // 253
   CIRCLE_NODE(BCQ_GATHER, CircleBCQGatherGraphBuilder);                                    // 252
   CIRCLE_NODE(BIDIRECTIONAL_SEQUENCE_LSTM, CircleBidirectionalSequenceLSTMGraphBuilder);   // 52
+  CIRCLE_NODE(BROADCAST_TO, CircleBroadcastToGraphBuilder);                                // 130
   CIRCLE_NODE(CAST, CircleCastGraphBuilder);                                               // 53
   CIRCLE_NODE(CEIL, CircleCeilGraphBuilder);                                               // 104
   CIRCLE_NODE(CUSTOM, CircleCustomGraphBuilder);                                           // 32
   CIRCLE_NODE(CONCATENATION, CircleConcatenationGraphBuilder);                             // 2
   CIRCLE_NODE(CONV_2D, CircleConv2DGraphBuilder);                                          // 3
   CIRCLE_NODE(COS, CircleCosGraphBuilder);                                                 // 108
+  CIRCLE_NODE(CUMSUM, CircleCumSumGraphBuilder);                                           // 128
   CIRCLE_NODE(DENSIFY, CircleDensifyGraphBuilder);                                         // 124
   CIRCLE_NODE(DEPTH_TO_SPACE, CircleDepthToSpaceGraphBuilder);                             // 5
   CIRCLE_NODE(DEPTHWISE_CONV_2D, CircleDepthwiseConv2DGraphBuilder);                       // 4
@@ -64,6 +66,7 @@ GraphBuilderRegistry::GraphBuilderRegistry()
   CIRCLE_NODE(GELU, CircleGeluGraphBuilder);                                               // 150
   CIRCLE_NODE(GREATER, CircleGreaterGraphBuilder);                                         // 61
   CIRCLE_NODE(GREATER_EQUAL, CircleGreaterEqualGraphBuilder);                              // 62
+  CIRCLE_NODE(GRU, CircleGRUGraphBuilder);                                                 // 251
   CIRCLE_NODE(HARD_SWISH, CircleHardSwishGraphBuilder);                                    // 117
   CIRCLE_NODE(IF, CircleIfGraphBuilder);                                                   // 118
   CIRCLE_NODE(INSTANCE_NORM, CircleInstanceNormGraphBuilder);                              // 254

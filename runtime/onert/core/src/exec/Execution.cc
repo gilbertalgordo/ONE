@@ -48,7 +48,7 @@ void Execution::changeInputShape(const ir::IOIndex &index, const ir::Shape &new_
 void Execution::setInput(const ir::IOIndex &index, const void *buffer, size_t length,
                          ir::Layout layout)
 {
-  const auto info = _executors->inputInfo(index);
+  const auto &info = _executors->inputInfo(index);
 
   // TODO handle when (!buffer && length != 0) : setting the input as an optional tensor
 
@@ -88,7 +88,7 @@ void Execution::setInput(const ir::IOIndex &index, const ir::TypeInfo &type, con
 // TODO Remove default parameter
 void Execution::setOutput(const ir::IOIndex &index, void *buffer, size_t length, ir::Layout layout)
 {
-  const auto info = _executors->outputInfo(index);
+  const auto &info = _executors->outputInfo(index);
 
   if (length < info.total_size())
   {
@@ -102,7 +102,7 @@ void Execution::setOutput(const ir::IOIndex &index, void *buffer, size_t length,
 void Execution::setOutput(const ir::IOIndex &index, const ir::TypeInfo &type,
                           const ir::Shape &shape, void *buffer, size_t length, ir::Layout layout)
 {
-  auto info = ir::OperandInfo::createStaticInfo(shape, type);
+  const auto &info = ir::OperandInfo::createStaticInfo(shape, type);
 
   if (length < info.total_size())
   {
@@ -153,7 +153,6 @@ void Execution::waitFinish()
 
 bool Execution::isFinished(void) const { return finished; }
 
-#ifdef ONERT_TRAIN
 void Execution::train(uint32_t training_step)
 {
   auto execs = dynamic_cast<exec::train::TrainableExecutors *>(_executors.get());
@@ -162,12 +161,8 @@ void Execution::train(uint32_t training_step)
     throw std::runtime_error{"Supported only TrainableExecutors"};
   }
 
-  VERBOSE(Execution) << "Start training" << std::endl;
-
   execs->train(_io_desc, training_step);
   finished = true;
-
-  VERBOSE(Execution) << "training finished" << std::endl;
 }
 
 float Execution::getLoss(const ir::IOIndex &ind)
@@ -180,7 +175,18 @@ float Execution::getLoss(const ir::IOIndex &ind)
 
   return execs->getLoss(ind);
 }
-#endif // ONERT_TRAIN
+
+void Execution::iterateTrainableTensors(
+  const std::function<void(const ir::OperandIndex &, const backend::train::ITrainableTensor *)> &fn)
+  const
+{
+  auto execs = dynamic_cast<exec::train::TrainableExecutors *>(_executors.get());
+  if (!execs)
+  {
+    throw std::runtime_error{"Supported only TrainableExecutors"};
+  }
+  execs->iterateTrainableTensors(fn);
+}
 
 ir::Shape Execution::getInputShape(ir::IOIndex ind) const
 {

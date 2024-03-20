@@ -133,6 +133,8 @@ convertElementwiseBinaryType(ir::operation::ElementwiseBinary::ElementwiseBinary
   {
     case ir::operation::ElementwiseBinary::ElementwiseBinaryType::FLOOR_DIV:
       return ops::ElementwiseBinaryType::kFloorDiv;
+    case ir::operation::ElementwiseBinary::ElementwiseBinaryType::FLOOR_MOD:
+      return ops::ElementwiseBinaryType::kFloorMod;
     case ir::operation::ElementwiseBinary::ElementwiseBinaryType::LOGICAL_AND:
       return ops::ElementwiseBinaryType::kLogicalAnd;
     case ir::operation::ElementwiseBinary::ElementwiseBinaryType::LOGICAL_OR:
@@ -229,10 +231,9 @@ KernelGenerator::KernelGenerator(
   const std::shared_ptr<basic::TensorRegistry> &tensor_reg,
   const std::shared_ptr<backend::custom::IKernelBuilder> &kernel_builder,
   const std::shared_ptr<ExternalContext> &external_context)
-  : basic::KernelGeneratorBase{graph},
-    _ctx(graph.operands()), _operations_ctx{graph.operations()}, _current_layout{graph.layout()},
-    _tensor_builder(tensor_builder), _tensor_reg{tensor_reg}, _kernel_builder(kernel_builder),
-    _external_context(external_context)
+  : basic::KernelGeneratorBase{graph}, _ctx(graph.operands()), _operations_ctx{graph.operations()},
+    _current_layout{graph.layout()}, _tensor_builder(tensor_builder), _tensor_reg{tensor_reg},
+    _kernel_builder(kernel_builder), _external_context(external_context)
 {
   // DO NOTHING
 }
@@ -307,8 +308,11 @@ void KernelGenerator::visit(const ir::operation::Conv2D &node)
 
   const auto stride = node.param().stride;
   const auto activation = node.param().activation;
-  const auto param_padding = node.param().padding;
+  const auto &param_padding = node.param().padding;
   const auto dilation = node.param().dilation;
+
+  const bool is_cacheable_weights = ker_tensor->is_constant();
+
   auto fn = std::make_unique<ops::ConvolutionLayer>();
 
   if (_ctx.at(ifm_index).info().isDynamic() || _ctx.at(ker_index).info().isDynamic())
@@ -316,7 +320,7 @@ void KernelGenerator::visit(const ir::operation::Conv2D &node)
     fn->configure(ifm_tensor, ker_tensor, bias_tensor, param_padding.type, param_padding.param.left,
                   param_padding.param.right, param_padding.param.top, param_padding.param.bottom,
                   stride.horizontal, stride.vertical, dilation.width_factor, dilation.height_factor,
-                  activation, ofm_tensor);
+                  activation, ofm_tensor, is_cacheable_weights);
 
     _return_fn = std::move(fn);
     return;
@@ -334,7 +338,8 @@ void KernelGenerator::visit(const ir::operation::Conv2D &node)
 
   fn->configure(ifm_tensor, ker_tensor, bias_tensor, param_padding.type, padding.left,
                 padding.right, padding.top, padding.bottom, stride.horizontal, stride.vertical,
-                dilation.width_factor, dilation.height_factor, activation, ofm_tensor);
+                dilation.width_factor, dilation.height_factor, activation, ofm_tensor,
+                is_cacheable_weights);
 
   _return_fn = std::move(fn);
 }
@@ -629,7 +634,7 @@ void KernelGenerator::visit(const ir::operation::Einsum &node)
   for (const auto &ifm_idx : node.getInputs())
     input_tensors.emplace_back(_tensor_reg->getPortableTensor(ifm_idx));
 
-  const auto equation = node.param().equation;
+  const auto &equation = node.param().equation;
 
   auto fn = std::make_unique<ops::EinsumLayer>();
 
@@ -789,25 +794,21 @@ void KernelGenerator::visit(const ir::operation::Pad &node)
   const auto input_index{node.getInputs().at(ir::operation::Pad::Input::INPUT)};
   const auto pad_index{node.getInputs().at(ir::operation::Pad::Input::PAD)};
   const auto output_index{node.getOutputs().at(0)};
-  assert(_ctx.at(pad_index).data());
 
   auto input = _tensor_reg->getPortableTensor(input_index);
+  auto pad = _tensor_reg->getPortableTensor(pad_index);
   auto output = _tensor_reg->getPortableTensor(output_index);
-  auto pad_rank = _ctx.at(pad_index).shape().dim(0);
-  auto pad_base = reinterpret_cast<const int32_t *>(_ctx.at(pad_index).data()->base());
 
   auto fn = std::make_unique<ops::PadLayer>();
 
-  bool isPadV2 = node.getInputs().size() == 3 ? true : false;
-  const void *value = nullptr;
-
-  if (isPadV2)
+  IPortableTensor *value = nullptr;
+  if (node.getInputs().size() == 3) // isPadV2
   {
     const auto value_index{node.getInputs().at(ir::operation::Pad::Input::VALUE)};
-    value = reinterpret_cast<const void *>(_ctx.at(value_index).data()->base());
+    value = _tensor_reg->getPortableTensor(value_index);
   }
 
-  fn->configure(input, output, pad_base, pad_rank, value);
+  fn->configure(input, pad, value, output);
   _return_fn = std::move(fn);
 }
 
@@ -1266,7 +1267,7 @@ void KernelGenerator::visit(const ir::operation::FusedBatchNorm &node)
 
   const auto epsilon = node.param().epsilon;
   const auto is_training = node.param().is_training;
-  const auto data_format = node.param().data_format;
+  const auto &data_format = node.param().data_format;
 
   auto fn = std::make_unique<ops::FusedBatchNormLayer>();
 

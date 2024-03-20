@@ -81,6 +81,7 @@ int entry(int argc, char **argv)
   add_switch(arser, "--fold_fully_connected",
              "This will fold FullyConnected operator with constant inputs");
   add_switch(arser, "--fold_gather", "This will fold Gather operator");
+  add_switch(arser, "--fold_shape", "This will fold Shape operator");
   add_switch(arser, "--fold_sparse_to_dense", "This will fold SparseToDense operator");
   add_switch(arser, "--forward_reshape_to_unaryop",
              "This will move Reshape after UnaryOp for centain condition");
@@ -88,6 +89,9 @@ int entry(int argc, char **argv)
              "This will move Transpose Op forward if possible (for further optimization)");
   add_switch(arser, "--fuse_activation_function",
              "This will fuse Activation function to a preceding operator");
+  add_switch(arser, "--fuse_horizontal_fc_layers",
+             "This will fuse horizontal FullyConnected layers");
+  add_switch(arser, "--fuse_add_with_conv", "This will fuse Add operator to Convolution operator");
   add_switch(arser, "--fuse_add_with_fully_connected",
              "This will fuse Add operator to FullyConnected operator");
   add_switch(arser, "--fuse_add_with_tconv",
@@ -103,6 +107,12 @@ int entry(int argc, char **argv)
   add_switch(arser, "--fuse_mean_with_mean",
              "This will fuse two Mean operations when they follow one by one. This will fold them "
              "into one operation and merge reduction indices.");
+  add_switch(arser, "--fuse_mul_with_conv",
+             "This will fuse Mul operation with a preceding Conv if possible.");
+  add_switch(arser, "--fuse_mul_with_div",
+             "This will fuse Mul operation with a Div operation whose numerator is const.");
+  add_switch(arser, "--fuse_slice_with_tconv",
+             "This will fuse Slice operation with a preceding TConv if possible.");
   add_switch(arser, "--fuse_transpose_with_mean",
              "This will fuse Mean operation with a preceding Transpose under certain conditions.");
   add_switch(arser, "--make_batchnorm_gamma_positive",
@@ -115,18 +125,25 @@ int entry(int argc, char **argv)
   add_switch(arser, "--fuse_gelu", "This will fuse operators to GeLU operator");
   add_switch(arser, "--remove_duplicate_const", "This will remove all duplicate constant nodes");
   add_switch(arser, "--remove_fakequant", "This will remove FakeQuant operators");
+  add_switch(arser, "--remove_gather_guard",
+             "This will remove Add/FloorMod guards of Gather indices with certain conditions. "
+             "CAUTION: user must guarantee that indices are all non-negative values.");
   add_switch(arser, "--remove_quantdequant", "This will remove Quantize-Dequantize sequence");
   add_switch(arser, "--remove_redundant_quantize", "This will remove redundant Quantize operators");
   add_switch(arser, "--remove_redundant_reshape",
              "This will fuse or remove subsequent Reshape operators");
   add_switch(arser, "--remove_redundant_transpose",
              "This will fuse or remove subsequent Transpose operators");
+  add_switch(arser, "--remove_unnecessary_add",
+             "This will remove unnecessary add of zero constant");
   add_switch(arser, "--remove_unnecessary_reshape",
              "This will remove unnecessary reshape operators");
   add_switch(arser, "--remove_unnecessary_slice", "This will remove unnecessary slice operators");
   add_switch(arser, "--remove_unnecessary_strided_slice",
              "This will remove unnecessary strided slice operators");
   add_switch(arser, "--remove_unnecessary_split", "This will remove unnecessary split operators");
+  add_switch(arser, "--remove_unnecessary_transpose",
+             "This will remove unnecessary transpose operators");
   add_switch(arser, "--replace_cw_mul_add_with_depthwise_conv",
              "This will replace channel-wise mul/add with DepthwiseConv2D operator");
   add_switch(arser, "--replace_sub_with_add", "This will replace sub with add operator");
@@ -141,6 +158,8 @@ int entry(int argc, char **argv)
              "This will convert Custom(MaxPoolWithArgmax) to equivalent set of operators");
   add_switch(arser, "--resolve_customop_splitv",
              "This will convert Custom(SplitV) to SplitV operator");
+  add_switch(arser, "--resolve_former_customop",
+             "This will convert a former custom op to builtin in from schema version upgrade");
   add_switch(arser, "--shuffle_weight_to_16x1float32",
              "This will convert weight format of FullyConnected to SHUFFLED16x1FLOAT32. Note that "
              "it only converts weights whose row is a multiple of 16");
@@ -173,6 +192,10 @@ int entry(int argc, char **argv)
              "Transform Minimum(6)-Relu pattern to Relu6 operator");
   add_switch(arser, "--decompose_hardswish",
              "Decompose HardSwish operator to Add, Mul and Relu6 operators");
+  add_switch(arser, "--decompose_softmax",
+             "Decompose Softmax operator into multiple operators for special backends");
+  add_switch(arser, "--common_subexpression_elimination",
+             "Perform common subexpression elimination");
   add_switch(arser, "--mute_warnings", "This will turn off warning messages");
   add_switch(arser, "--disable_validation",
              "This will turn off operator validations. May help input model investigation.");
@@ -245,6 +268,8 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::FoldFullyConnected);
   if (arser.get<bool>("--fold_gather"))
     options->enable(Algorithms::FoldGather);
+  if (arser.get<bool>("--fold_shape"))
+    options->enable(Algorithms::FoldShape);
   if (arser.get<bool>("--fold_sparse_to_dense"))
     options->enable(Algorithms::FoldSparseToDense);
   if (arser.get<bool>("--forward_reshape_to_unaryop"))
@@ -253,8 +278,12 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::ForwardTransposeOp);
   if (arser.get<bool>("--fuse_activation_function"))
     options->enable(Algorithms::FuseActivationFunction);
+  if (arser.get<bool>("--fuse_horizontal_fc_layers"))
+    options->enable(Algorithms::FuseHorizontalFullyConnected);
   if (arser.get<bool>("--fuse_batchnorm_with_conv"))
     options->enable(Algorithms::FuseBatchNormWithConv);
+  if (arser.get<bool>("--fuse_add_with_conv"))
+    options->enable(Algorithms::FuseAddWithConv);
   if (arser.get<bool>("--fuse_add_with_fully_connected"))
     options->enable(Algorithms::FuseAddWithFullyConnected);
   if (arser.get<bool>("--fuse_add_with_tconv"))
@@ -263,12 +292,18 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::FuseBatchNormWithDwConv);
   if (arser.get<bool>("--fuse_batchnorm_with_tconv"))
     options->enable(Algorithms::FuseBatchNormWithTConv);
+  if (arser.get<bool>("--fuse_slice_with_tconv"))
+    options->enable(Algorithms::FuseSliceWithTConv);
   if (arser.get<bool>("--fuse_bcq"))
     options->enable(Algorithms::FuseBCQ);
   if (arser.get<bool>("--fuse_instnorm"))
     options->enable(Algorithms::FuseInstanceNorm);
   if (arser.get<bool>("--fuse_mean_with_mean"))
     options->enable(Algorithms::FuseMeanWithMean);
+  if (arser.get<bool>("--fuse_mul_with_conv"))
+    options->enable(Algorithms::FuseMulWithConv);
+  if (arser.get<bool>("--fuse_mul_with_div"))
+    options->enable(Algorithms::FuseMulWithDiv);
   if (arser.get<bool>("--make_batchnorm_gamma_positive"))
     options->enable(Algorithms::MakeBatchNormGammaPositive);
   if (arser.get<bool>("--fuse_preactivation_batchnorm"))
@@ -283,6 +318,8 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::RemoveDuplicateConst);
   if (arser.get<bool>("--remove_fakequant"))
     options->enable(Algorithms::RemoveFakeQuant);
+  if (arser.get<bool>("--remove_gather_guard"))
+    options->enable(Algorithms::RemoveGatherGuard);
   if (arser.get<bool>("--remove_quantdequant"))
     options->enable(Algorithms::RemoveQuantDequantSeq);
   if (arser.get<bool>("--remove_redundant_quantize"))
@@ -291,6 +328,8 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::RemoveRedundantReshape);
   if (arser.get<bool>("--remove_redundant_transpose"))
     options->enable(Algorithms::RemoveRedundantTranspose);
+  if (arser.get<bool>("--remove_unnecessary_add"))
+    options->enable(Algorithms::RemoveUnnecessaryAdd);
   if (arser.get<bool>("--remove_unnecessary_reshape"))
     options->enable(Algorithms::RemoveUnnecessaryReshape);
   if (arser.get<bool>("--remove_unnecessary_slice"))
@@ -299,6 +338,8 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::RemoveUnnecessaryStridedSlice);
   if (arser.get<bool>("--remove_unnecessary_split"))
     options->enable(Algorithms::RemoveUnnecessarySplit);
+  if (arser.get<bool>("--remove_unnecessary_transpose"))
+    options->enable(Algorithms::RemoveUnnecessaryTranspose);
   if (arser.get<bool>("--replace_cw_mul_add_with_depthwise_conv"))
     options->enable(Algorithms::ReplaceMulAddWithDepthwiseConv);
   if (arser.get<bool>("--replace_sub_with_add"))
@@ -315,6 +356,8 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::ResolveCustomOpMaxPoolWithArgmax);
   if (arser.get<bool>("--resolve_customop_splitv"))
     options->enable(Algorithms::ResolveCustomOpSplitV);
+  if (arser.get<bool>("--resolve_former_customop"))
+    options->enable(Algorithms::ResolveFormerCustomOp);
   if (arser.get<bool>("--shuffle_weight_to_16x1float32"))
     options->enable(Algorithms::ShuffleWeightTo16x1Float32);
   if (arser.get<bool>("--replace_non_const_fc_with_batch_matmul"))
@@ -335,8 +378,12 @@ int entry(int argc, char **argv)
     options->enable(Algorithms::TransformMinMaxToRelu6Pass);
   if (arser.get<bool>("--transform_min_relu_to_relu6"))
     options->enable(Algorithms::TransformMinReluToRelu6Pass);
+  if (arser.get<bool>("--common_subexpression_elimination"))
+    options->enable(Algorithms::CommonSubExpressionElimination);
   if (arser.get<bool>("--decompose_hardswish"))
     options->enable(Algorithms::DecomposeHardSwishPass);
+  if (arser.get<bool>("--decompose_softmax"))
+    options->enable(Algorithms::DecomposeSoftmaxPass);
   if (arser.get<bool>("--expand_broadcast_const"))
     options->enable(Algorithms::ExpandBroadcastConst);
   if (arser.get<bool>("--unroll_unidirseqlstm"))

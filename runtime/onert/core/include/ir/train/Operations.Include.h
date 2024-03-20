@@ -17,12 +17,16 @@
 #ifndef __ONERT_IR_TRAIN_OPERATIONS_OPERATION_INCLUDE_H__
 #define __ONERT_IR_TRAIN_OPERATIONS_OPERATION_INCLUDE_H__
 
+#include "ir/train/operation/BinaryArithmetic.h"
 #include "ir/train/operation/Conv2D.h"
+#include "ir/train/operation/DepthwiseConv2D.h"
 #include "ir/train/operation/ElementwiseActivation.h"
 #include "ir/train/operation/FullyConnected.h"
 #include "ir/train/operation/Loss.h"
+#include "ir/train/operation/Pad.h"
 #include "ir/train/operation/Permute.h"
 #include "ir/train/operation/Pool2D.h"
+#include "ir/train/operation/Reduce.h"
 #include "ir/train/operation/Reshape.h"
 #include "ir/train/operation/Softmax.h"
 

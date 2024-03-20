@@ -5,7 +5,8 @@ import argparse
 
 def _create_parser():
     parser = argparse.ArgumentParser(
-        description='Convert a dataset of tensorflow to onert format')
+        description='Convert a dataset of tensorflow to onert format',
+        formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument(
         '-s', '--show-datasets', action='store_true', help='show dataset list')
     parser.add_argument(
@@ -30,19 +31,29 @@ def _create_parser():
         metavar='Prefix',
         help='prefix name of the file to be created (default: "")')
     parser.add_argument(
-        '-l',
-        '--train-length',
-        type=int,
-        default=1000,
-        metavar='N',
-        help='Number of data for training (default: 1000)')
+        '--split',
+        nargs='*',
+        type=str,
+        default=['train', 'test'],
+        metavar='Split',
+        help='Which split of the data to load (default: "train test")')
     parser.add_argument(
-        '-t',
-        '--test-length',
+        '--length',
+        nargs='*',
         type=int,
-        default=100,
+        default=[1000, 100],
         metavar='N',
-        help='Number of data for training (default: 100)')
+        help='Data number for items described in split (default: "1000 100")')
+    models = ['mnist', 'mobilenetv2']
+    parser.add_argument(
+        '-m',
+        '--model',
+        type=str,
+        default='mnist',
+        choices=models,
+        metavar='Model',
+        help=('Model name to use generated data (default: mnist)\n'
+              'Supported models: ' + ', '.join(models)))
 
     return parser
 

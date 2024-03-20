@@ -19,7 +19,9 @@
 
 #include "util/Index.h"
 
+#include <iomanip>
 #include <ostream>
+#include <sstream>
 
 namespace onert
 {
@@ -41,13 +43,18 @@ using SubgraphIndex = ::onert::util::Index<uint16_t, SubgraphIndexTag>;
 struct ModelIndexTag;
 using ModelIndex = ::onert::util::Index<uint16_t, ModelIndexTag>;
 
+struct OriginIndexTag;
+using OriginIndex = ::onert::util::Index<uint32_t, OriginIndexTag>;
+
 template <typename IndexType>
 std::ostream &_index_print_impl(std::ostream &o, const std::string &prefix, IndexType index)
 {
+  std::ostringstream oss;
   if (index.undefined())
-    return o << prefix << std::string("?");
+    oss << prefix << std::string("?");
   else
-    return o << prefix << index.value();
+    oss << prefix << index.value();
+  return o << std::right << std::setw(4) << oss.str();
 }
 
 inline std::ostream &operator<<(std::ostream &o, const OperationIndex &i)
@@ -75,6 +82,10 @@ inline std::ostream &operator<<(std::ostream &o, const ModelIndex &i)
   return _index_print_impl(o, "MODEL", i);
 }
 
+inline std::ostream &operator<<(std::ostream &o, const OriginIndex &i)
+{
+  return _index_print_impl(o, "", i);
+}
 } // namespace ir
 } // namespace onert
 

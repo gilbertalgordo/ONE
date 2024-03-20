@@ -26,11 +26,13 @@
 #include "Nodes/CircleBatchMatMul.h"
 #include "Nodes/CircleBatchToSpaceND.h"
 #include "Nodes/CircleBidirectionalSequenceLSTM.h"
+#include "Nodes/CircleBroadcastTo.h"
 #include "Nodes/CircleCast.h"
 #include "Nodes/CircleCeil.h"
 #include "Nodes/CircleConcatenation.h"
 #include "Nodes/CircleConv2D.h"
 #include "Nodes/CircleCos.h"
+#include "Nodes/CircleCumSum.h"
 #include "Nodes/CircleCustom.h"
 #include "Nodes/CircleDensify.h"
 #include "Nodes/CircleDepthToSpace.h"
@@ -136,6 +138,7 @@
 // Circle only
 #include "Nodes/CircleBCQFullyConnected.h"
 #include "Nodes/CircleBCQGather.h"
+#include "Nodes/CircleGRU.h"
 #include "Nodes/CircleInstanceNorm.h"
 // Virtual nodes
 #include "Nodes/CircleConst.h"

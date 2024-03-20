@@ -87,6 +87,7 @@ public:
              node->asymmetric_quantize_inputs())
       .Union();
   }
+  flatbuffers::Offset<void> visit(luci::CircleBroadcastTo *) { return _no_option; }
   flatbuffers::Offset<void> visit(luci::CircleCast *node)
   {
     if (node->out_data_type() == loco::DataType::Unknown)
@@ -116,6 +117,10 @@ public:
   flatbuffers::Offset<void> visit(luci::CircleCos *)
   {
     return circle::CreateCosOptions(_builder).Union();
+  }
+  flatbuffers::Offset<void> visit(luci::CircleCumSum *node)
+  {
+    return circle::CreateCumsumOptions(_builder, node->exclusive(), node->reverse()).Union();
   }
   flatbuffers::Offset<void> visit(luci::CircleCustom *) { return _no_option; }
   flatbuffers::Offset<void> visit(luci::CircleDensify *)
@@ -528,6 +533,12 @@ public:
   flatbuffers::Offset<void> visit(luci::CircleBCQGather *node)
   {
     return circle::CreateBCQGatherOptions(_builder, node->input_hidden_size(), node->axis())
+      .Union();
+  }
+  flatbuffers::Offset<void> visit(luci::CircleGRU *node)
+  {
+    return circle::CreateGRUOptions(_builder, to_circle_actfunc(node->fusedActivationFunction()),
+                                    node->returnSequences(), node->timeMajor())
       .Union();
   }
   flatbuffers::Offset<void> visit(luci::CircleInstanceNorm *node)

@@ -101,9 +101,10 @@ operation {
   output: "fc2"
 }
 operation {
-  type: "Erf"
+  type: "Custom"
   input: "fc2"
   output: "erf"
+  custom_code: "Erf"
 }
 operation {
   type: "Add"

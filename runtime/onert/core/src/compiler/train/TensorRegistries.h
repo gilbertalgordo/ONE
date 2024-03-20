@@ -20,6 +20,7 @@
 #include "../../backend/builtin/Config.h"
 #include "../../backend/builtin/train/TensorRegistry.h"
 
+#include <backend/train/ITensorRegistry.h>
 #include <backend/train/TrainableBackendContext.h>
 
 #include <memory>
@@ -73,7 +74,7 @@ public:
 
   backend::ITensor *getITensor(ir::OperandIndex index) const
   {
-    for (auto &&tensor_reg : _tensor_regs)
+    for (const auto &tensor_reg : _tensor_regs)
     {
       auto tensor = tensor_reg->getITensor(index);
       if (tensor)
@@ -82,15 +83,23 @@ public:
     return nullptr;
   }
 
-  backend::ITensor *getDerivativeITensor(ir::OperandIndex index) const
+  backend::ITensor *getBackPropITensor(ir::OperandIndex index) const
   {
-    for (auto &&tensor_reg : _tensor_regs)
+    for (const auto &tensor_reg : _tensor_regs)
     {
-      auto tensor = tensor_reg->getDerivativeITensor(index);
+      auto tensor = tensor_reg->getBackPropITensor(index);
       if (tensor)
         return tensor;
     }
     return nullptr;
+  }
+
+  void iterateTrainableTensors(
+    const std::function<void(const ir::OperandIndex &, const backend::train::ITrainableTensor *)>
+      &fn) const
+  {
+    for (const auto &tensor_reg : _tensor_regs)
+      tensor_reg->iterateTrainableTensors(fn);
   }
 
 private:

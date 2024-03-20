@@ -28,23 +28,10 @@ namespace operation
 
 void Loss::accept(OperationVisitor &v) const { v.visit(*this); }
 
-Loss::Loss(const OperandIndexSequence &inputs, const OperandIndexSequence &outputs,
-           const Param &param)
-  : Operation{OperandConstraint::createAtLeast(2u), inputs, outputs}, _param{param}
+Loss::Loss(const OperandIndexSequence &inputs, const OperandIndexSequence &outputs)
+  : Operation{OperandConstraint::createAtLeast(2u), inputs, outputs}
 {
-  if (param.op_type == Type::CATEGORICAL_CROSSENTROPY)
-  {
-    assert(inputs.size() == 2 && "CategoricalCrossentropy Loss has 2 inputs");
-  }
-}
-
-std::string Loss::name() const
-{
-  using LossType = onert::ir::operation::Loss::Type;
-  static const std::unordered_map<Type, std::string> name_map{
-    {LossType::MEAN_SQUARED_ERROR, "MeanSquaredError Loss"},
-    {LossType::CATEGORICAL_CROSSENTROPY, "CategoricalCrossentropy Loss"}};
-  return name_map.at(_param.op_type);
+  assert(inputs.size() == 2);
 }
 
 } // namespace operation

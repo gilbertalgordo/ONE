@@ -24,7 +24,9 @@
 #include "nnfw_experimental.h"
 #include "randomgen.h"
 #include "rawformatter.h"
+#include "dataloader.h"
 #include "rawdataloader.h"
+#include "metrics.h"
 
 #include <boost/program_options.hpp>
 #include <cassert>
@@ -56,13 +58,15 @@ int main(const int argc, char **argv)
 
     // TODO Apply verbose level to phases
     const int verbose = args.getVerboseLevel();
-    benchmark::Phases phases(benchmark::PhaseOption{});
+
+    // prepare measure tool
+    Measure measure(args.getMemoryPoll());
 
     nnfw_session *session = nullptr;
     NNPR_ENSURE_STATUS(nnfw_create_session(&session));
 
     // ModelLoad
-    phases.run("MODEL_LOAD", [&](const benchmark::Phase &, uint32_t) {
+    measure.run(PhaseType::MODEL_LOAD, [&]() {
       if (args.useSingleModel())
         NNPR_ENSURE_STATUS(
           nnfw_load_model_from_modelfile(session, args.getModelFilename().c_str()));
@@ -117,45 +121,41 @@ int main(const int argc, char **argv)
     verifyInputTypes();
     verifyOutputTypes();
 
-    auto convertLossType = [](int type) {
-      switch (type)
-      {
-        case 0:
-          return NNFW_TRAIN_LOSS_MEAN_SQUARED_ERROR;
-        case 1:
-          return NNFW_TRAIN_LOSS_CATEGORICAL_CROSSENTROPY;
-        default:
-          std::cerr << "E: not supported loss type" << std::endl;
-          exit(-1);
-      }
+    auto getMetricTypeStr = [](int type) {
+      if (type < 0)
+        return "";
+      // Metric type
+      // 0: Categorical Accuracy
+      std::vector<int> acc = {0};
+      auto it = std::find(acc.begin(), acc.end(), type);
+      if (it == acc.end())
+        return "metric";
+      return "accuracy";
     };
 
-    auto convertOptType = [](int type) {
-      switch (type)
-      {
-        case 0:
-          return NNFW_TRAIN_OPTIMIZER_SGD;
-        case 1:
-          return NNFW_TRAIN_OPTIMIZER_ADAM;
-        default:
-          std::cerr << "E: not supported optimizer type" << std::endl;
-          exit(-1);
-      }
-    };
-
-    // prepare training info
+    // get training information
     nnfw_train_info tri;
-    tri.batch_size = args.getBatchSize();
-    tri.learning_rate = args.getLearningRate();
-    tri.loss = convertLossType(args.getLossType());
-    tri.opt = convertOptType(args.getOptimizerType());
+    NNPR_ENSURE_STATUS(nnfw_train_get_traininfo(session, &tri));
+
+    // overwrite training information using the arguments
+    tri.batch_size = args.getBatchSize().value_or(tri.batch_size);
+    tri.learning_rate = args.getLearningRate().value_or(tri.learning_rate);
+    tri.loss_info.loss = args.getLossType().value_or(tri.loss_info.loss);
+    tri.loss_info.reduction_type =
+      args.getLossReductionType().value_or(tri.loss_info.reduction_type);
+    tri.opt = args.getOptimizerType().value_or(tri.opt);
+
+    std::cout << "== training parameter ==" << std::endl;
+    std::cout << tri;
+    std::cout << "========================" << std::endl;
+
+    // set training information
+    NNPR_ENSURE_STATUS(nnfw_train_set_traininfo(session, &tri));
 
     // prepare execution
 
     // TODO When nnfw_{prepare|run} are failed, can't catch the time
-    phases.run("PREPARE", [&](const benchmark::Phase &, uint32_t) {
-      NNPR_ENSURE_STATUS(nnfw_train_prepare(session, &tri));
-    });
+    measure.run(PhaseType::PREPARE, [&]() { NNPR_ENSURE_STATUS(nnfw_train_prepare(session)); });
 
     // prepare input and expected tensor info lists
     std::vector<nnfw_tensorinfo> input_infos;
@@ -164,6 +164,7 @@ int main(const int argc, char **argv)
     // prepare data buffers
     std::vector<Allocation> input_data(num_inputs);
     std::vector<Allocation> expected_data(num_expecteds);
+    std::vector<Allocation> output_data(num_expecteds);
 
     for (uint32_t i = 0; i < num_inputs; ++i)
     {
@@ -177,20 +178,33 @@ int main(const int argc, char **argv)
     {
       nnfw_tensorinfo ti;
       NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
-      expected_data[i].alloc(bufsize_for(&ti));
+
+      // For validation
+      uint64_t output_size_in_bytes = bufsize_for(&ti);
+      output_data[i].alloc(output_size_in_bytes);
+      NNPR_ENSURE_STATUS(
+        nnfw_train_set_output(session, i, ti.dtype, output_data[i].data(), output_size_in_bytes));
+
+      expected_data[i].alloc(output_size_in_bytes);
       expected_infos.emplace_back(std::move(ti));
     }
 
-    auto data_length = args.getDataLength();
-
-    Generator generator;
-    RawDataLoader rawDataLoader;
+    uint32_t tdata_length;
+    Generator tdata_generator;
+    uint32_t vdata_length;
+    Generator vdata_generator;
+    std::unique_ptr<DataLoader> dataLoader;
 
     if (!args.getLoadRawInputFilename().empty() && !args.getLoadRawExpectedFilename().empty())
     {
-      generator =
-        rawDataLoader.loadData(args.getLoadRawInputFilename(), args.getLoadRawExpectedFilename(),
-                               input_infos, expected_infos, data_length, tri.batch_size);
+      dataLoader = std::make_unique<RawDataLoader>(args.getLoadRawInputFilename(),
+                                                   args.getLoadRawExpectedFilename(), input_infos,
+                                                   expected_infos);
+
+      auto train_to = 1.0f - args.getValidationSplit();
+      std::tie(tdata_generator, tdata_length) = dataLoader->loadData(tri.batch_size, 0.f, train_to);
+      std::tie(vdata_generator, vdata_length) =
+        dataLoader->loadData(tri.batch_size, train_to, 1.0f);
     }
     else
     {
@@ -199,68 +213,155 @@ int main(const int argc, char **argv)
       exit(-1);
     }
 
-    Measure measure;
+    if (tdata_length < tri.batch_size)
+    {
+      std::cerr << "E: training data is not enough for training."
+                   "Reduce batch_size or add more data"
+                << std::endl;
+      exit(-1);
+    }
+
+    // If the user does not give the validation_split value,
+    // the vdata_length is 0 by default and it does not execute
+    // validation loop.
+    if (vdata_length != 0 && vdata_length < tri.batch_size)
+    {
+      std::cerr << "E: validation data is not enough for validation."
+                   "Reduce batch_size or adjust validation_split value"
+                << std::endl;
+      exit(-1);
+    }
+
     std::vector<float> losses(num_expecteds);
-    phases.run("EXECUTE", [&](const benchmark::Phase &, uint32_t) {
-      const int num_step = data_length / tri.batch_size;
+    std::vector<float> metrics(num_expecteds);
+    measure.run(PhaseType::EXECUTE, [&]() {
+      const int num_step = tdata_length / tri.batch_size;
       const int num_epoch = args.getEpoch();
       measure.set(num_epoch, num_step);
       for (uint32_t epoch = 0; epoch < num_epoch; ++epoch)
       {
-        std::fill(losses.begin(), losses.end(), 0);
-        for (uint32_t n = 0; n < num_step; ++n)
+        //
+        // TRAINING
+        //
         {
-          // get batchsize data
-          if (!generator(n, input_data, expected_data))
-            break;
-
-          // prepare input
-          for (uint32_t i = 0; i < num_inputs; ++i)
+          std::fill(losses.begin(), losses.end(), 0);
+          for (uint32_t n = 0; n < num_step; ++n)
           {
-            NNPR_ENSURE_STATUS(
-              nnfw_train_set_input(session, i, input_data[i].data(), &input_infos[i]));
+            // get batchsize data
+            if (!tdata_generator(n, input_data, expected_data))
+              break;
+
+            // prepare input
+            for (uint32_t i = 0; i < num_inputs; ++i)
+            {
+              NNPR_ENSURE_STATUS(
+                nnfw_train_set_input(session, i, input_data[i].data(), &input_infos[i]));
+            }
+
+            // prepare output
+            for (uint32_t i = 0; i < num_expecteds; ++i)
+            {
+              NNPR_ENSURE_STATUS(
+                nnfw_train_set_expected(session, i, expected_data[i].data(), &expected_infos[i]));
+            }
+
+            // train
+            measure.run(epoch, n, [&]() { NNPR_ENSURE_STATUS(nnfw_train(session, true)); });
+
+            // store loss
+            for (int32_t i = 0; i < num_expecteds; ++i)
+            {
+              float temp = 0.f;
+              NNPR_ENSURE_STATUS(nnfw_train_get_loss(session, i, &temp));
+              losses[i] += temp;
+            }
           }
 
-          // prepare output
+          // print loss
+          std::cout << std::fixed;
+          std::cout << "Epoch " << epoch + 1 << "/" << num_epoch;
+          measure.printTimeMs(epoch, AggregateType::AVERAGE);
+          std::cout.precision(4);
+          std::cout << " - loss: ";
           for (uint32_t i = 0; i < num_expecteds; ++i)
           {
-            NNPR_ENSURE_STATUS(
-              nnfw_train_set_expected(session, i, expected_data[i].data(), &expected_infos[i]));
-          }
-
-          // train
-          measure.run(epoch, n, [&]() { NNPR_ENSURE_STATUS(nnfw_train(session, true)); });
-
-          // store loss
-          for (int32_t i = 0; i < num_expecteds; ++i)
-          {
-            float temp = 0.f;
-            NNPR_ENSURE_STATUS(nnfw_train_get_loss(session, i, &temp));
-            losses[i] += temp;
+            std::cout << "[" << i << "] " << losses[i] / num_step;
           }
         }
 
-        // print loss
-        std::cout << std::fixed;
-        std::cout.precision(3);
-        std::cout << "Epoch " << epoch + 1 << "/" << num_epoch << " - " << measure.timeMs(epoch)
-                  << "ms/step - loss: ";
-        std::cout.precision(4);
-        for (uint32_t i = 0; i < num_expecteds; ++i)
+        //
+        // VALIDATION
+        //
+        if (vdata_length > 0)
         {
-          std::cout << "[" << i << "] " << losses[i] / num_step;
+          std::fill(losses.begin(), losses.end(), 0);
+          std::fill(metrics.begin(), metrics.end(), 0);
+          const int num_valid_step = vdata_length / tri.batch_size;
+          for (uint32_t n = 0; n < num_valid_step; ++n)
+          {
+            // get batchsize validation data
+            if (!vdata_generator(n, input_data, expected_data))
+              break;
+
+            // prepare input
+            for (uint32_t i = 0; i < num_inputs; ++i)
+            {
+              NNPR_ENSURE_STATUS(
+                nnfw_train_set_input(session, i, input_data[i].data(), &input_infos[i]));
+            }
+
+            // prepare output
+            for (uint32_t i = 0; i < num_expecteds; ++i)
+            {
+              NNPR_ENSURE_STATUS(
+                nnfw_train_set_expected(session, i, expected_data[i].data(), &expected_infos[i]));
+            }
+
+            // validation
+            NNPR_ENSURE_STATUS(nnfw_train(session, false));
+
+            // get validation loss and accuracy
+            Metrics metric(output_data, expected_data, expected_infos);
+            for (int32_t i = 0; i < num_expecteds; ++i)
+            {
+              float temp = 0.f;
+              NNPR_ENSURE_STATUS(nnfw_train_get_loss(session, i, &temp));
+              losses[i] += temp;
+              if (args.getMetricType() == 0)
+                metrics[i] += metric.categoricalAccuracy(i);
+            }
+          }
+
+          // print validation loss and accuracy
+          std::cout << std::fixed;
+          std::cout.precision(4);
+          std::cout << " - val_loss: ";
+          for (uint32_t i = 0; i < num_expecteds; ++i)
+          {
+            std::cout << "[" << i << "] " << losses[i] / num_valid_step;
+          }
+          // TODO use init-statement in selection statements (c++17)
+          std::string str;
+          if ((str = getMetricTypeStr(args.getMetricType())) != "")
+          {
+            std::cout << " - val_" << str << ": ";
+            for (uint32_t i = 0; i < num_expecteds; ++i)
+            {
+              std::cout << "[" << i << "] " << metrics[i] / num_valid_step;
+            }
+          }
         }
-        std::cout /* << "- accuracy: " << accuracy*/ << std::endl;
+
+        std::cout << std::endl;
       }
     });
 
+    if (args.getExportModelFilename() != "")
+      NNPR_ENSURE_STATUS(nnfw_train_export_circle(session, args.getExportModelFilename().c_str()));
+
     NNPR_ENSURE_STATUS(nnfw_close_session(session));
 
-    // prepare result
-    benchmark::Result result(phases);
-
-    // to stdout
-    benchmark::printResult(result);
+    measure.printResult();
 
     return 0;
   }

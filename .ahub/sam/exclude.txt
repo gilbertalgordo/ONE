@@ -25,8 +25,9 @@
 /ONE/tests
 
 # Flatbuffers generated
-/ONE/runtime/onert/frontend/circle_schema/include/circle_schema_generated.h
-/ONE/runtime/onert/frontend/tflite/src/tflite_schema_generated.h
+/ONE/runtime/libs/circle-schema/include/circle_schema_generated.h
+/ONE/runtime/libs/circle-schema/include/circle_traininfo_generated.h
+/ONE/runtime/onert/core/src/loader/tflite_schema_generated.h
 
 # External code: Android NN API
 /ONE/runtime/nnapi-header/include/NeuralNetworks.h
