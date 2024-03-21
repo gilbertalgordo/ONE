@@ -16,8 +16,11 @@
 
 #include "ir/train/TrainableGraph.h"
 #include "util/Utils.h"
+#include "util/Set.h"
 
 #include <algorithm>
+#include <set>
+#include <map>
 #include <misc/polymorphic_downcast.h>
 
 namespace onert
@@ -30,7 +33,7 @@ namespace train
 TrainableGraph::TrainableGraph() : _graph{} {}
 
 TrainableGraph::TrainableGraph(const TrainableGraph &tgraph)
-  : _graph{tgraph._graph}, _derivatives{tgraph._derivatives}, _losses{tgraph._losses}
+  : _graph{tgraph._graph}, _backward_operands{tgraph._backward_operands}, _losses{tgraph._losses}
 {
   tgraph.operations().iterate(
     [&](const onert::ir::OperationIndex &index, const onert::ir::IOperation &op) {
@@ -61,10 +64,10 @@ OperationIndex TrainableGraph::replaceOperation(OperationIndex index,
   return _graph.replaceOperation(index, std::move(operation));
 }
 
-OperandIndex TrainableGraph::addDerivative(OperandIndex index,
-                                           std::unique_ptr<Operand> &&derivative)
+OperandIndex TrainableGraph::addBackwardOperand(OperandIndex index,
+                                                std::unique_ptr<Operand> &&bwd_operand)
 {
-  return _derivatives.push(std::move(derivative), index);
+  return _backward_operands.push(std::move(bwd_operand), index);
 }
 
 IOIndex TrainableGraph::getInputIndex(const std::string &name) const
@@ -82,10 +85,10 @@ void TrainableGraph::changeShape(const OperandIndex &index, const ir::Shape &new
   _graph.changeShape(index, new_shape);
 }
 
-void TrainableGraph::changeDerivativeShape(const OperandIndex &index, const ir::Shape &new_shape)
+void TrainableGraph::changeBackwardShape(const OperandIndex &index, const ir::Shape &new_shape)
 {
-  assert(_derivatives.exist(index));
-  _derivatives.at(index).info().shape(new_shape);
+  assert(_backward_operands.exist(index));
+  _backward_operands.at(index).info().shape(new_shape);
 }
 
 void TrainableGraph::addInput(const OperandIndex &ind, const std::string &name)
@@ -109,7 +112,7 @@ void TrainableGraph::verify(void) const
     }
     catch (const std::bad_cast &)
     {
-      std::runtime_error("TrainableGraph: " + op.name() + " is not a trainable operation");
+      throw std::runtime_error("TrainableGraph: " + op.name() + " is not a trainable operation");
     }
   });
 }
@@ -124,9 +127,142 @@ const ITrainableOperation &TrainableGraph::operation(OperationIndex index) const
   return dynamic_cast<const ITrainableOperation &>(_graph.operations().at(index));
 }
 
+void TrainableGraph::validateTopologicalOrder(std::vector<ir::OperationIndex> order,
+                                              bool is_forward) const
+{
+  if (!is_forward)
+    std::reverse(order.begin(), order.end());
+
+  const std::string order_type = is_forward ? "forward" : "backward";
+
+  std::map<ir::OperationIndex, uint32_t> position;
+  for (uint32_t p = 0; p < order.size(); ++p)
+  {
+    auto index = order[p];
+    // TODO: replace this with `std::map::contains` after C++20
+    if (position.find(index) != position.end())
+      throw std::runtime_error{"Invalid " + order_type + " topological order: duplicate node @" +
+                               std::to_string(index.value())};
+
+    position[index] = p;
+  }
+
+  operations().iterate([&](const ir::OperationIndex &index, const ir::IOperation &op) {
+    if (position.count(index) == 0)
+      return;
+
+    uint32_t p = position[index];
+
+    for (const auto &output : op.getOutputs() | ir::Remove::DUPLICATED | ir::Remove::UNDEFINED)
+    {
+      const auto &operand = operands().at(output);
+      for (const auto &use : operand.getUses())
+      {
+        if (position.count(use) == 0)
+          continue;
+
+        uint32_t q = position[use];
+        if (p > q)
+          throw std::runtime_error{
+            "Invalid " + order_type + " topological order: inversion between @" +
+            std::to_string(index.value()) + " and @" + std::to_string(use.value())};
+      }
+    }
+  });
+}
+
+void TrainableGraph::validateForwardTopologicalOrder(
+  const std::vector<ir::OperationIndex> &order) const
+{
+  validateTopologicalOrder(order, true);
+}
+
+void TrainableGraph::validateBackwardTopologicalOrder(
+  const std::vector<ir::OperationIndex> &order) const
+{
+  validateTopologicalOrder(order, false);
+}
+
 std::vector<ir::OperationIndex> TrainableGraph::topolSortOperations() const
 {
-  return _graph.topolSortOperations();
+  auto ret = _graph.topolSortOperations();
+  validateForwardTopologicalOrder(ret);
+
+  return ret;
+}
+
+std::vector<ir::OperationIndex> TrainableGraph::btopolSortOperations() const
+{
+  std::vector<ir::OperationIndex> ret;
+  util::Set<ir::OperationIndex> unvisited;
+  ir::OperationIndex loss_idx;
+  operations().iterate([&](const ir::OperationIndex &index, const ir::IOperation &op) {
+    unvisited.add(index);
+    if (op.opcode() == ir::OpCode::Loss)
+    {
+      assert(!loss_idx.valid()); // Should be only one loss
+      loss_idx = index;
+    }
+  });
+
+  std::function<void(const ir::OperationIndex &, const ir::IOperation &)> dfs =
+    [&](const ir::OperationIndex &index, const ir::IOperation &op) -> void {
+    if (!unvisited.contains(index))
+      return;
+    unvisited.remove(index);
+
+    for (const auto &input : op.getInputs() | ir::Remove::DUPLICATED | ir::Remove::UNDEFINED)
+    {
+      const auto &operand = operands().at(input);
+      const auto &def = operand.getDef();
+      if (!def.valid())
+        continue;
+      dfs(def, operations().at(def));
+    }
+
+    ret.push_back(index);
+  };
+
+  dfs(loss_idx, operations().at(loss_idx));
+  std::reverse(ret.begin(), ret.end());
+  validateBackwardTopologicalOrder(ret);
+
+  return ret;
+}
+
+std::vector<ir::OperationIndex>
+TrainableGraph::truncateBackwardOrder(std::vector<ir::OperationIndex> backward_order) const
+{
+  auto forward_order = backward_order;
+  std::reverse(forward_order.begin(), forward_order.end());
+
+  std::set<ir::OperationIndex> alive;
+
+  for (const auto &index : forward_order)
+  {
+    const auto &op = operations().at(index);
+    const auto &trainable_op = dynamic_cast<const ITrainableOperation &>(op);
+
+    if (trainable_op.hasTrainableParameter())
+      alive.insert(index);
+
+    // TODO: replace this with `std::set::contains` after C++20
+    if (alive.find(index) != alive.end())
+      for (const auto &output : op.getOutputs())
+      {
+        const auto &operand = operands().at(output);
+        for (const auto &use : operand.getUses())
+          alive.insert(use);
+      }
+  }
+
+  // TODO: replace this with `std::erase_if(std::vector)` after C++20
+  backward_order.erase(
+    std::remove_if(backward_order.begin(), backward_order.end(),
+                   [&](const auto &index) { return alive.find(index) == alive.end(); }),
+    backward_order.end());
+
+  return backward_order;
 }
 
 void TrainableGraph::addLoss(const OperandIndex &loss_ind, const IOIndex &pred_ioind)

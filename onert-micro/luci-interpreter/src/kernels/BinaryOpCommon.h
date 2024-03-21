@@ -19,8 +19,9 @@
 #define LUCI_INTERPRETER_KERNELS_BINARYOPUTILS_H
 
 #include "TISOKernel.h"
+#include "PALComparisons.h"
+#include "Params.h"
 #include "ProcessBroadcastShapes.h"
-
 #include "Utils.h"
 
 namespace luci_interpreter
@@ -60,10 +61,8 @@ template <typename T, typename TISOFunc = nullptr_t, typename TISOBroadcastFunc 
 void evalTISOKernel(TISOFunc tiso_func, TISOBroadcastFunc tiso_broadcast_func,
                     kernels::TISOKernel *kernel, kernels::TISOData *kernel_data,
                     const Options *options, RuntimeShape &&input_shape_1,
-                    RuntimeShape &&input_shape_2)
+                    RuntimeShape &&input_shape_2, RuntimeShape &&output_shape)
 {
-  const auto *output = kernel->output();
-
   luci_interpreter_pal::ArithmeticParams params{};
   fillArithmeticActivationRange<T>(params, luci_actfunc(options->fused_activation_function()));
 
@@ -74,8 +73,7 @@ void evalTISOKernel(TISOFunc tiso_func, TISOBroadcastFunc tiso_broadcast_func,
   {
     tiso_broadcast_func(params, input_shape_1, kernels::getTensorData<T>(kernel_data->input1_data),
                         input_shape_2, kernels::getTensorData<T>(kernel_data->input2_data),
-                        kernels::getTensorShape(output),
-                        kernels::getTensorData<T>(kernel_data->output_data));
+                        output_shape, kernels::getTensorData<T>(kernel_data->output_data));
   }
   else
   {
@@ -90,7 +88,8 @@ template <typename T, typename TISOFunc = nullptr_t, typename TISOBroadcastFunc 
           typename Options = nullptr_t>
 void evalTISOInplaceKernel(TISOFunc tiso_func, TISOBroadcastFunc tiso_broadcast_func,
                            kernels::TISOKernel *kernel, const Options *options,
-                           RuntimeShape &&input_shape_1, RuntimeShape &&input_shape_2)
+                           RuntimeShape &&input_shape_1, RuntimeShape &&input_shape_2,
+                           RuntimeShape &&output_shape)
 {
   uint8_t *inplace_data_ptr = nullptr;
   circle::Tensor *input_inplace_tensor = nullptr;
@@ -99,7 +98,7 @@ void evalTISOInplaceKernel(TISOFunc tiso_func, TISOBroadcastFunc tiso_broadcast_
 
   evalTISOKernel<T, TISOFunc, TISOBroadcastFunc, Options>(
     tiso_func, tiso_broadcast_func, kernel, &kernel_data, options, std::move(input_shape_1),
-    std::move(input_shape_2));
+    std::move(input_shape_2), std::move(output_shape));
 
   BaseRuntimeGraph *runtime_graph = kernel->runtime_graph();
 
@@ -112,6 +111,14 @@ void evalTISOInplaceKernel(TISOFunc tiso_func, TISOBroadcastFunc tiso_broadcast_
   {
     runtime_graph->makeInplaceOperation(kernel->input1(), nullptr);
   }
+}
+
+inline void CheckBinaryOpDataTypesEqual(const kernels::TISOKernel &kernel)
+{
+  LUCI_INTERPRETER_CHECK(Tensor::element_type(kernel.input1()) ==
+                         Tensor::element_type(kernel.input2()));
+  LUCI_INTERPRETER_CHECK(Tensor::element_type(kernel.input1()) ==
+                         Tensor::element_type(kernel.output()));
 }
 
 #ifndef DIS_QUANT

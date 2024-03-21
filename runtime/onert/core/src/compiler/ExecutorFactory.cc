@@ -20,6 +20,7 @@
 #include "../backend/builtin/BackendContext.h"
 #include "../backend/builtin/Config.h"
 #include "../backend/builtin/UserTensor.h"
+#include "../backend/builtin/train/BackendContext.h"
 #include "../dumper/text/GraphDumper.h"
 #include "../exec/DataflowExecutor.h"
 #include "../exec/ExecTime.h"
@@ -29,23 +30,18 @@
 #include "../exec/MinMaxRecorder.h"
 #endif
 #include "../exec/ParallelExecutor.h"
+#include "../exec/train/TrainableExecutor.h"
 #include "../ir/OperationCloner.h"
 
 #include <backend/IPortableTensor.h>
+#include <backend/train/TrainableBackendContext.h>
+#include <backend/train/ITrainableBackend.h>
 #include <compiler/BackendManager.h>
 #include <compiler/ExecutionBuilder.h>
 #include <util/TracingCtx.h>
 
 #include <functional>
 #include <memory>
-
-#ifdef ONERT_TRAIN
-#include "../backend/builtin/train/BackendContext.h"
-#include "../exec/train/TrainableExecutor.h"
-
-#include <backend/train/TrainableBackendContext.h>
-#include <backend/train/ITrainableBackend.h>
-#endif // ONERT_TRAIN
 
 namespace onert
 {
@@ -129,7 +125,6 @@ void initializeSubgraphIOTensors(compiler::ILoweredGraph &lowered_graph,
   }
 }
 
-#ifdef ONERT_TRAIN
 void initializeSubgraphIOTensors(compiler::ILoweredGraph &lowered_graph,
                                  const backend::train::TrainableBackendContexts &backend_contexts,
                                  const ir::OperandIndexSequence &indices)
@@ -159,25 +154,21 @@ void initializeSubgraphIOTensors(compiler::ILoweredGraph &lowered_graph,
     builtin_tensor_reg->setNativeIOTensor(ind, std::move(tensor));
   }
 }
-#endif // ONERT_TRAIN
 
 backend::BackendContexts
 createBackendContexts(compiler::ILoweredGraph &lgraph, bool linear_executor,
                       std::shared_ptr<backend::custom::IKernelBuilder> custom_kernel_builder)
 {
   backend::BackendContexts contexts;
-  auto &backend_manager = compiler::BackendManager::get();
-
   std::unordered_map<const backend::Backend *, backend::ContextData> context_data_map;
 
   // Generate partial graphs for each backend
-  for (auto &&backend : backend_manager.getAll())
-  {
+  auto init_context_data = [&](const backend::Backend *backend) {
     auto &data = context_data_map[backend];
     auto graph = std::make_unique<ir::Graph>();
     graph->setLayout(lgraph.graph().layout());
     data.graph = std::move(graph);
-  }
+  };
 
   auto &whole_graph = lgraph.graph();
   // Separate operands into partial graphs
@@ -188,6 +179,9 @@ createBackendContexts(compiler::ILoweredGraph &lgraph, bool linear_executor,
       return;
     const auto &def_factor = def_factors.getOnlyElement();
     const auto backend = def_factor.backend();
+    if (context_data_map.find(backend) == context_data_map.end())
+      init_context_data(backend);
+
     auto &partial_graph = *context_data_map[backend].graph;
     auto &operand_layouts = context_data_map[backend].operand_layouts;
     assert(operand_layouts.find(operand_ind) == operand_layouts.end());
@@ -206,6 +200,9 @@ createBackendContexts(compiler::ILoweredGraph &lgraph, bool linear_executor,
     [&](const ir::OperationIndex &op_ind, const ir::IOperation &operation) {
       auto &op_li = lgraph.lower_info().operation;
       auto backend = op_li.at(op_ind).backend();
+      if (context_data_map.find(backend) == context_data_map.end())
+        init_context_data(backend);
+
       auto &partial_graph = *context_data_map[backend].graph;
       auto &external_operands = context_data_map[backend].external_operands;
       auto &operand_layouts = context_data_map[backend].operand_layouts;
@@ -258,6 +255,8 @@ createBackendContexts(compiler::ILoweredGraph &lgraph, bool linear_executor,
       if (whole_graph.getOutputs().contains(ind) || operand.getUses().size() == 0)
         data.graph->addOutput(ind);
     });
+    VERBOSE(ExecutorFactory) << "createBackendContexts: partial graph for backend="
+                             << backend->config()->id() << std::endl;
     dumper::text::dumpGraph(*data.graph);
 
     std::copy_if(whole_op_order.begin(), whole_op_order.end(), std::back_inserter(data.op_order),
@@ -608,19 +607,18 @@ ExecutorFactory::createDataflowExecutor(std::unique_ptr<compiler::LoweredGraph> 
   return exec;
 }
 
-#ifdef ONERT_TRAIN
 exec::IExecutor *
 ExecutorFactory::create(std::unique_ptr<compiler::train::LoweredTrainableGraph> lowered_graph,
                         const std::shared_ptr<exec::IExecutors> &executors,
                         const ExecutorFactoryArgs &args,
-                        const std::shared_ptr<exec::train::optimizer::Optimizer> &optimizer)
+                        const ir::train::TrainingInfo &training_info)
 {
   assert(args.options != nullptr);
 
   if (args.options->executor != "Linear")
     throw std::runtime_error("ExecutorFactory: TrainableExecutor supports only 'Linear' now");
 
-  return createTrainableExecutor(std::move(lowered_graph), executors, args, optimizer);
+  return createTrainableExecutor(std::move(lowered_graph), executors, args, training_info);
 }
 
 void ExecutorFactory::prepareMigrantTensors(
@@ -654,7 +652,7 @@ void ExecutorFactory::prepareMigrantTensors(
 exec::IExecutor *ExecutorFactory::createTrainableExecutor(
   std::unique_ptr<compiler::train::LoweredTrainableGraph> lowered_graph,
   const std::shared_ptr<exec::IExecutors> &, const ExecutorFactoryArgs &args,
-  const std::shared_ptr<exec::train::optimizer::Optimizer> &optimizer)
+  const ir::train::TrainingInfo &training_info)
 {
   const auto options = args.options;
   const auto tracing_ctx = args.tracing_ctx;
@@ -697,11 +695,11 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
       });
     data.graph->operands().iterate([&](const ir::OperandIndex &index, const ir::Operand &) {
       const auto &orig_tgraph = lowered_graph->trainable_graph();
-      if (orig_tgraph.derivatives().exist(index))
+      if (orig_tgraph.backward_operands().exist(index))
       {
-        const auto &deriv = orig_tgraph.derivatives().at(index);
-        auto new_deriv = std::make_unique<ir::Operand>(deriv);
-        auto gen_index = tgraph->addDerivative(index, std::move(new_deriv));
+        const auto &bwd_operand = orig_tgraph.backward_operands().at(index);
+        auto new_bwd_operand = std::make_unique<ir::Operand>(bwd_operand);
+        auto gen_index = tgraph->addBackwardOperand(index, std::move(new_bwd_operand));
         UNUSED_RELEASE(gen_index);
         assert(gen_index == index);
       }
@@ -723,20 +721,17 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
     tdata.operand_layouts = std::move(data.operand_layouts);
     tdata.custom_kernel_builder = std::move(data.custom_kernel_builder);
     tdata.is_linear_executor = data.is_linear_executor;
-    tdata.optimizer = optimizer;
+    tdata.optim_info = training_info.optimizerInfo();
 
     // TODO Remove dynamic_cast
-    try
-    {
-      const auto backend = pair.first;
-      const auto tbackend = dynamic_cast<const backend::train::ITrainableBackend *>(backend);
-      tbackend_contexts.emplace(backend, tbackend->newContext(std::move(tdata)));
-    }
-    catch (const std::bad_cast &)
+    const auto backend = pair.first;
+    const auto tbackend = dynamic_cast<const backend::train::ITrainableBackend *>(backend);
+    if (!tbackend)
     {
       throw std::runtime_error("ExecutorFactory: Invalid backend - TrainableExecutor does not "
                                "support non-trainble backends");
     }
+    tbackend_contexts.emplace(backend, tbackend->newContext(std::move(tdata)));
   }
   base_backend_contexts.clear();
 
@@ -747,9 +742,17 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
     (lowered_graph->graph().getInputs() + lowered_graph->graph().getOutputs()) |
       ir::Remove::DUPLICATED | ir::Remove::UNDEFINED);
 
-  // linearize
+  // linearize for forwarding
   auto order = Linear::linearize(*lowered_graph);
+  VERBOSE(ExecutorFactory) << "Linearize for forwarding order" << std::endl;
   Linear::dump(*lowered_graph, order);
+
+  // linearize for backwarding
+  auto backward_order = lowered_graph->trainable_graph().btopolSortOperations();
+  // get rid of all nodes not reachable from a node with trainable parameters
+  backward_order = lowered_graph->trainable_graph().truncateBackwardOrder(backward_order);
+  VERBOSE(ExecutorFactory) << "Linearize for backwarding order" << std::endl;
+  Linear::dump(*lowered_graph, backward_order);
 
   for (auto &&pair : tbackend_contexts)
   {
@@ -805,7 +808,7 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
       uses_map[ind]++;
     }
 
-    for (const auto op_ind : order)
+    for (const auto &op_ind : order)
     {
       const auto &op = graph.operations().at(op_ind);
       auto op_inputs = op.getInputs() | ir::Remove::DUPLICATED | ir::Remove::UNDEFINED;
@@ -835,23 +838,23 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
                   [](std::pair<const ir::OperandIndex, uint32_t> it) { return it.second == 0; }));
   }
 
-  // Check derivative tensors
+  // Check back propagation tensors
   {
     // TODO Support multiple subgraphs
-    // Check if the derivative tensors corresponding to inputs of model are nullptr
-    // NOTE The derivative tensors corresponding to inputs of model are for inputs of PermuteLayers
+    // Check if the back propagation tensors corresponding to inputs of model are nullptr
+    // NOTE The back propagation tensors corresponding to inputs of model are for inputs of
+    // PermuteLayers
     //      and they are nullptr and because they are meaningless.
-    assert(std::all_of(lowered_graph->trainable_graph().getInputs().begin(),
-                       lowered_graph->trainable_graph().getInputs().end(),
-                       [&](const auto &input_idx) {
-                         return tensor_regs.getDerivativeITensor(input_idx) == nullptr;
-                       }));
+    assert(std::all_of(
+      lowered_graph->trainable_graph().getInputs().begin(),
+      lowered_graph->trainable_graph().getInputs().end(),
+      [&](const auto &input_idx) { return tensor_regs.getBackPropITensor(input_idx) == nullptr; }));
 
-    // Check if the derivative tensors corresponding to outputs of model exist
+    // Check if the back propagation tensors corresponding to outputs of model exist
     assert(std::all_of(lowered_graph->trainable_graph().getOutputs().begin(),
                        lowered_graph->trainable_graph().getOutputs().end(),
                        [&](const auto &output_idx) {
-                         return tensor_regs.getDerivativeITensor(output_idx) == nullptr;
+                         return tensor_regs.getBackPropITensor(output_idx) == nullptr;
                        }));
   }
 
@@ -883,7 +886,9 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
                                                  tensor_regs,
                                                  std::move(code_map),
                                                  order,
-                                                 tracing_ctx};
+                                                 backward_order,
+                                                 tracing_ctx,
+                                                 training_info.lossInfo()};
 
   if (!options->trace_filepath.empty())
   {
@@ -895,7 +900,6 @@ exec::IExecutor *ExecutorFactory::createTrainableExecutor(
 
   return exec;
 }
-#endif // ONERT_TRAIN
 
 } // namespace compiler
 } // namespace onert

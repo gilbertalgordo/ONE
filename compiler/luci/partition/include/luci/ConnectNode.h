@@ -70,12 +70,14 @@ public:
   void visit(const luci::CircleAveragePool2D *) final;
   void visit(const luci::CircleBatchMatMul *) final;
   void visit(const luci::CircleBatchToSpaceND *) final;
+  void visit(const luci::CircleBroadcastTo *) final;
   void visit(const luci::CircleCast *) final;
   void visit(const luci::CircleCeil *) final;
   void visit(const luci::CircleConcatenation *) final;
   void visit(const luci::CircleConst *) final;
   void visit(const luci::CircleConv2D *) final;
   void visit(const luci::CircleCos *) final;
+  void visit(const luci::CircleCumSum *) final;
   void visit(const luci::CircleCustom *) final;
   void visit(const luci::CircleDensify *) final;
   void visit(const luci::CircleDepthToSpace *) final;

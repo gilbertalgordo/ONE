@@ -20,6 +20,7 @@ endif()
 #      below code will remove extension when copy and install.
 set(ONE_COMMAND_FILES
     one-build
+    one-create-quant-dataset
     one-import
     one-import-bcq
     one-import-tf
@@ -159,6 +160,7 @@ foreach(ONE_PYTHON_FILE IN ITEMS ${ONE_PYTHON_FILES})
 endforeach(ONE_PYTHON_FILE)
 
 set(CONSTANT_EXPORTING_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/${ONE_PYTHON_DIR}/export_constant.py")
+set(CONSTANT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/${ONE_PYTHON_DIR}/constant.py")
 set(O1_OPTION "O1")
 set(O1_CFG_FILE "${O1_OPTION}.cfg")
 set(O1_CFG_FILE_BIN "${CMAKE_CURRENT_BINARY_DIR}/${ONE_PYTHON_DIR}/${O1_CFG_FILE}")
@@ -168,7 +170,7 @@ add_custom_command(OUTPUT ${O1_CFG_FILE_BIN}
           --constant ${O1_OPTION}
           --format cfg
           --output_path ${O1_CFG_FILE_BIN}
-  DEPENDS ${CONSTANT_EXPORTING_SCRIPT}
+  DEPENDS ${CONSTANT_EXPORTING_SCRIPT} ${CONSTANT_SCRIPT}
   COMMENT "Generate ${O1_CFG_FILE}"
 )
 

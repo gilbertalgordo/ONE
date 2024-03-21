@@ -30,7 +30,45 @@ namespace ops
 
 using OperandType = onert::ir::DataType;
 using cpu::ops::getBuffer;
+using cpu::ops::getPaddingType;
 using cpu::ops::getShape;
+using cpu::ops::getNumberOfDimensions;
+using cpu::ops::getNumberOfElements;
+using cpu::ops::getSizeOfDimension;
+
+/**
+ * @brief backpropagate acitvation
+ *
+ *             -- forward direction -->
+ *
+ *   [ current layer ]   ----   [ next layer ]
+ *   [ op    |  act  ]
+ *
+ *             <-- backward direction --
+ *
+ * @param activation      activation of current layer
+ * @param output          forward direction's output of current layer
+ * @param input_backprop  backward direction's output of next layer
+ *                        In other words, incoming gradient to current layer
+ * @param output_backprop backward direction's output of activation,
+ *                        In other words, outcoming gradient of current layer's acitvation
+ *                        If activation is NONE, this param can be nullptr
+ * @return tensor that holds backpropagate result of activation
+ *         If activation is NONE, just return input_backprop
+ */
+const IPortableTensor *backpropActivation(const ir::Activation &activation,
+                                          const IPortableTensor *output,
+                                          const IPortableTensor *input_backprop,
+                                          IPortableTensor *output_backprop);
+
+/**
+ * @brief backpropagate bias
+ *
+ * @param input_backprop backward direction's output of next layer
+ *                       In other words, incoming gradient to current layer
+ * @param bias_grad      gradient tensor of bias
+ */
+void biasGrad(const IPortableTensor *input_backprop, IPortableTensor *bias_grad);
 
 } // namespace ops
 } // namespace train

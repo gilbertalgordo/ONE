@@ -25,6 +25,7 @@
 #include "backend/train/TrainableBackendContext.h"
 #include "compiler/train/TrainableCodeMap.h"
 #include "compiler/train/LoweredTrainableGraph.h"
+#include "ir/train/LossInfo.h"
 #include "ir/Index.h"
 #include "util/TracingCtx.h"
 
@@ -48,8 +49,9 @@ public:
                     backend::train::TrainableBackendContexts &&backend_contexts,
                     const compiler::train::TensorRegistries &tensor_regs,
                     compiler::train::TrainableCodeMap &&code_map,
-                    const std::vector<ir::OperationIndex> &order,
-                    const util::TracingCtx *tracing_ctx);
+                    const std::vector<ir::OperationIndex> &forward_order,
+                    const std::vector<ir::OperationIndex> &backward_order,
+                    const util::TracingCtx *tracing_ctx, const ir::train::LossInfo &training_info);
 
 public:
   const ir::Graph &graph() const final { return _trainable_graph.graph(); }
@@ -82,6 +84,10 @@ public:
 
   float getLoss(const ir::IOIndex &pred_io_ind) const;
 
+  void iterateTrainableTensors(
+    const std::function<void(const ir::OperandIndex &, const backend::train::ITrainableTensor *)>
+      &fn) const;
+
   backend::train::TrainableBackendContexts &getBackendContexts() { return _backend_contexts; }
 
 private:
@@ -89,7 +95,9 @@ private:
   void backwardImpl(uint32_t training_step);
 
 private:
-  std::vector<compiler::train::TrainableCodeAndInfo> _code;
+  compiler::train::TrainableCodeMap _code_map;
+  std::vector<ir::OperationIndex> _forward_order;
+  std::vector<ir::OperationIndex> _backward_order;
   ExecutionObservee _subject;
   std::shared_ptr<ir::OperationIndexMap<int64_t>> _indexed_ranks;
   std::unique_ptr<compiler::train::LoweredTrainableGraph> _lowered_graph;
@@ -100,6 +108,7 @@ private:
   std::vector<backend::builtin::IOTensor *> _output_tensors;
   std::mutex _mutex;
   const util::TracingCtx *_tracing_ctx;
+  const ir::train::LossInfo _loss_info;
 };
 
 } // namespace train

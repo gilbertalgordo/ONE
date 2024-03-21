@@ -18,8 +18,9 @@
 #include "DepthParameterizer.h"
 #include "VISQErrorApproximator.h"
 
-#include <core/ErrorMetric.h>
-#include <core/SolverOutput.h>
+#include "core/DataProvider.h"
+#include "core/ErrorMetric.h"
+#include "core/SolverOutput.h"
 
 #include <luci/ImporterEx.h>
 
@@ -74,10 +75,8 @@ bool front_has_higher_error(const NodeDepthType &nodes_depth, const std::string 
 
 } // namespace
 
-BisectionSolver::BisectionSolver(const std::string &input_data_path, float qerror_ratio,
-                                 const std::string &input_quantization,
-                                 const std::string &output_quantization)
-  : MPQSolver(input_data_path, qerror_ratio, input_quantization, output_quantization)
+BisectionSolver::BisectionSolver(const mpqsolver::core::Quantizer::Context &ctx, float qerror_ratio)
+  : MPQSolver(ctx), _qerror_ratio(qerror_ratio)
 {
 }
 
@@ -85,9 +84,11 @@ float BisectionSolver::evaluate(const core::DatasetEvaluator &evaluator,
                                 const std::string &flt_path, const std::string &def_quant,
                                 core::LayerParams &layers)
 {
-  auto model = read_module(flt_path);
+  auto model = readModule(flt_path);
+  assert(model != nullptr);
+
   // get fake quantized model for evaluation
-  if (!_quantizer->fake_quantize(model.get(), def_quant, layers))
+  if (!_quantizer->fakeQuantize(model.get(), def_quant, layers))
   {
     throw std::runtime_error("Failed to produce fake-quantized model.");
   }
@@ -99,9 +100,15 @@ void BisectionSolver::algorithm(Algorithm algorithm) { _algorithm = algorithm; }
 
 void BisectionSolver::setVisqPath(const std::string &visq_path) { _visq_data_path = visq_path; }
 
+void BisectionSolver::setInputData(std::unique_ptr<mpqsolver::core::DataProvider> &&data)
+{
+  _input_data = std::move(data);
+}
+
 std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_path)
 {
-  auto module = read_module(module_path);
+  auto module = readModule(module_path);
+  assert(module != nullptr);
 
   float min_depth = 0.f;
   float max_depth = 0.f;
@@ -116,7 +123,11 @@ std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_pat
   SolverOutput::get() << "\n>> Computing baseline qerrors\n";
 
   std::unique_ptr<core::MAEMetric> metric = std::make_unique<core::MAEMetric>();
-  core::DatasetEvaluator evaluator(module.get(), _input_data_path, *metric.get());
+  if (!_input_data)
+  {
+    throw std::runtime_error("no input data");
+  }
+  core::DatasetEvaluator evaluator(module.get(), *_input_data.get(), *metric.get());
 
   core::LayerParams layer_params;
   float int16_qerror =
@@ -126,10 +137,10 @@ std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_pat
   float uint8_qerror =
     evaluate(evaluator, module_path, "uint8" /* default quant_dtype */, layer_params);
   SolverOutput::get() << "Full uint8 model qerror: " << uint8_qerror << "\n";
-  _quantizer->set_hook(_hooks.get());
+  _quantizer->setHook(_hooks.get());
   if (_hooks)
   {
-    _hooks->on_begin_solver(module_path, uint8_qerror, int16_qerror);
+    _hooks->onBeginSolver(module_path, uint8_qerror, int16_qerror);
   }
 
   if (int16_qerror > uint8_qerror)
@@ -140,19 +151,46 @@ std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_pat
   _qerror = int16_qerror + _qerror_ratio * std::fabs(uint8_qerror - int16_qerror);
   SolverOutput::get() << "Target qerror: " << _qerror << "\n";
 
-  if (uint8_qerror <= _qerror)
+  // it'is assumed that int16_qerror <= _qerror <= uint8_qerror,
+  if (int16_qerror >= _qerror)
   {
-    // no need for bisectioning just return Q8 model
+    // return Q16 model (we can not make it more accurate)
+    if (!_quantizer->quantize(module.get(), "int16", layer_params))
+    {
+      std::cerr << "ERROR: Failed to quantize model" << std::endl;
+      return nullptr;
+    }
+
+    if (_hooks)
+    {
+      _hooks->onEndSolver(layer_params, "int16", int16_qerror);
+    }
+
+    SolverOutput::get() << "The best configuration is int16 configuration\n";
+    return module;
+  }
+  else if (uint8_qerror <= _qerror)
+  {
+    // return Q8 model (we can not make it less accurate)
     if (!_quantizer->quantize(module.get(), "uint8", layer_params))
     {
       std::cerr << "ERROR: Failed to quantize model" << std::endl;
       return nullptr;
     }
+
+    if (_hooks)
+    {
+      _hooks->onEndSolver(layer_params, "uint8", uint8_qerror);
+    }
+
+    SolverOutput::get() << "The best configuration is uint8 configuration\n";
+    return module;
   }
 
+  // search for optimal mixed precision quantization configuration
   int last_depth = -1;
   float best_depth = -1;
-  float best_accuracy = -1;
+  float best_error = -1; // minimal error
   core::LayerParams best_params;
   if (module->size() != 1)
   {
@@ -193,16 +231,16 @@ std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_pat
 
   while (true)
   {
-    if (_hooks)
-    {
-      _hooks->on_begin_iteration();
-    }
-
     int cut_depth = static_cast<int>(std::floor(0.5f * (min_depth + max_depth)));
 
     if (last_depth == cut_depth)
     {
       break;
+    }
+
+    if (_hooks)
+    {
+      _hooks->onBeginIteration();
     }
 
     SolverOutput::get() << "Looking for the optimal configuration in [" << min_depth << " , "
@@ -235,34 +273,34 @@ std::unique_ptr<luci::Module> BisectionSolver::run(const std::string &module_pat
       }
     }
 
-    float cur_accuracy = evaluate(evaluator, module_path, "uint8", layer_params);
+    float cur_error = evaluate(evaluator, module_path, "uint8", layer_params);
 
     if (_hooks)
     {
-      _hooks->on_end_iteration(layer_params, "uint8", cur_accuracy);
+      _hooks->onEndIteration(layer_params, "uint8", cur_error);
     }
 
-    if (cur_accuracy < _qerror)
+    if (cur_error < _qerror)
     {
-      SolverOutput::get() << "Qerror at depth " << cut_depth << " is " << cur_accuracy
+      SolverOutput::get() << "Qerror at depth " << cut_depth << " is " << cur_error
                           << " < target qerror (" << _qerror << ")\n";
       int16_front ? (max_depth = cut_depth) : (min_depth = cut_depth);
       best_params = layer_params;
       best_depth = cut_depth;
-      best_accuracy = cur_accuracy;
+      best_error = cur_error;
     }
     else
     {
-      SolverOutput::get() << "Qerror at depth " << cut_depth << " is " << cur_accuracy
-                          << (cur_accuracy > _qerror ? " > " : " == ") << "target qerror ("
-                          << _qerror << ")\n";
+      SolverOutput::get() << "Qerror at depth " << cut_depth << " is " << cur_error
+                          << (cur_error > _qerror ? " > " : " == ") << "target qerror (" << _qerror
+                          << ")\n";
       int16_front ? (min_depth = cut_depth) : (max_depth = cut_depth);
     }
   }
 
   if (_hooks)
   {
-    _hooks->on_end_solver(best_params, "uint8", best_accuracy);
+    _hooks->onEndSolver(best_params, "uint8", best_error);
   }
 
   SolverOutput::get() << "Found the best configuration at depth " << best_depth << "\n";

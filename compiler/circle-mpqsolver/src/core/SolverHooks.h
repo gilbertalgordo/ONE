@@ -19,7 +19,7 @@
 
 #include <luci/IR/Module.h>
 
-#include <core/Quantizer.h>
+#include "core/Quantizer.h"
 
 #include <string>
 
@@ -32,17 +32,17 @@ class SolverHooks
 {
 public:
   /**
-   * @brief called on the start of iterative search
+   * @brief called on the start of mpq search
    * @param model_path path of original float model to quantize
-   * @param q8error error of Q8 quantization
-   * @param q16error error of Q16 quantization
+   * @param q8error error of Q8 quantization (if NAN, then not applicable)
+   * @param q16error error of Q16 quantization (if NAN, then not applicable)
    */
-  virtual void on_begin_solver(const std::string &model_path, float q8error, float q16error) = 0;
+  virtual void onBeginSolver(const std::string &model_path, float q8error, float q16error) = 0;
 
   /**
    * @brief called on the start of current iteration
    */
-  virtual void on_begin_iteration() = 0;
+  virtual void onBeginIteration() = 0;
 
   /**
    * @brief called at the end of current iteration
@@ -50,17 +50,17 @@ public:
    * @param def_dtype default quantization dtype
    * @param error error of quantization for current iteration
    */
-  virtual void on_end_iteration(const LayerParams &layers, const std::string &def_dtype,
-                                float error) const = 0;
+  virtual void onEndIteration(const LayerParams &layers, const std::string &def_dtype,
+                              float error) = 0;
 
   /**
-   * @brief called at the end of iterative search
+   * @brief called at the end of mpq search
    * @param layers model nodes with specific quantization parameters
    * @param def_dtype default quantization dtype
-   * @param qerror final error of quantization
+   * @param qerror final error of quantization (if NAN, then not applicable)
    */
-  virtual void on_end_solver(const LayerParams &layers, const std::string &def_dtype,
-                             float qerror) = 0;
+  virtual void onEndSolver(const LayerParams &layers, const std::string &def_dtype,
+                           float qerror) = 0;
 };
 
 } // namespace core

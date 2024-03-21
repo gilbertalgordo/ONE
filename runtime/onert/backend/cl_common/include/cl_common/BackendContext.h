@@ -41,8 +41,8 @@ public:
                  std::shared_ptr<T_ConstantInitializer> constant_initializer = nullptr,
                  std::shared_ptr<T_KernelGenerator> kernel_gen = nullptr)
     : onert::backend::BackendContext(backend, std::move(data), tensor_registry),
-      tensor_builder{tensor_builder}, constant_initializer{constant_initializer}, kernel_gen{
-                                                                                    kernel_gen}
+      tensor_builder{tensor_builder}, constant_initializer{constant_initializer},
+      kernel_gen{kernel_gen}
   {
   }
 
@@ -121,7 +121,7 @@ protected:
       if (!tensor_builder->isRegistered(ind))
       {
         // These tensors do not exist in any operation (No use and def)
-        const auto info = obj.info();
+        const auto &info = obj.info();
         const auto layout = _data.operand_layouts.at(ind);
         // TODO Change tensor info to have permuted shape
         registerTensorInfo(ind, info, layout);

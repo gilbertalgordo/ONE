@@ -17,6 +17,8 @@
 #ifndef __NNFW_CKER_TRAIN_OPERATION_LOSS_H__
 #define __NNFW_CKER_TRAIN_OPERATION_LOSS_H__
 
+#include <numeric>
+
 #include "cker/Shape.h"
 #include "cker/eigen/Utils.h"
 
@@ -27,31 +29,32 @@ namespace cker
 namespace train
 {
 
+template <typename T> inline T square(T value) { return value * value; }
+template <typename T> inline T log_threshold() { return static_cast<T>(1e-20); }
+
 template <typename T>
 inline void MSE(const Shape &y_pred_shape, const T *y_pred_data, const Shape &y_true_shape,
                 const T *y_true_data, const Shape &output_shape, T *output_data)
 {
-  // TODO Consider Reduction
-  if (output_shape != Shape{1})
-    throw std::runtime_error("cker::MSE: output_shape != Shape{1}");
+  if (output_shape.DimensionsCount() != 1)
+    throw std::runtime_error("cker::MSE: output dimension count should be 1");
+  if (output_shape.Dims(0) != y_pred_shape.Dims(0))
+    throw std::runtime_error("cker::MSE: output and y_pred do not have the same batch");
   if (y_pred_shape != y_true_shape)
     throw std::runtime_error("cker::MSE: y_pred_shape != y_true_shape");
 
-  const auto y_pred = MapAsMatrixWithLastDimAsRows(y_pred_data, y_pred_shape);
-  const auto y_true = MapAsMatrixWithLastDimAsRows(y_true_data, y_true_shape);
+  const auto batch = y_pred_shape.Dims(0);
+  const auto size = FlatSizeSkipDim(y_pred_shape, 0);
 
-  double squared_sum = 0.0f;
-  for (size_t c = 0; c < (size_t)y_pred.cols(); ++c)
+  for (int b = 0; b < batch; ++b)
   {
-    for (size_t r = 0; r < (size_t)y_pred.rows(); ++r)
+    float sum = 0.f;
+    for (int i = 0; i < size; ++i)
     {
-      double error = y_pred.coeff(r, c) - y_true.coeff(r, c);
-      squared_sum += (error * error);
+      sum += square(y_pred_data[b * size + i] - y_true_data[b * size + i]);
     }
+    output_data[b] = static_cast<T>(sum / size);
   }
-
-  auto size = y_pred.cols() * y_pred.rows();
-  output_data[0] = (T)(squared_sum / size);
 }
 
 template <typename T>
@@ -68,6 +71,46 @@ inline void MSEGrad(const Shape &y_pred_shape, const T *y_pred_data, const Shape
   {
     grad_data[i] = static_cast<T>(-2 * (y_true_data[i] - y_pred_data[i]) / size);
   }
+}
+
+template <typename T>
+inline void CategoricalCrossEntropy(const Shape &y_pred_shape, const T *y_pred_data,
+                                    const Shape &y_true_shape, const T *y_true_data,
+                                    const Shape &output_shape, T *output_data)
+{
+  if (output_shape.DimensionsCount() != 1)
+    throw std::runtime_error("cker::CategoricalCrossEntropy: output dimension count should be 1");
+  if (y_pred_shape != y_true_shape)
+    throw std::runtime_error(
+      "cker::CategoricalCrossEntropy: y_pred and y_true do not have the same shape");
+  if (output_shape.Dims(0) != y_pred_shape.Dims(0))
+    throw std::runtime_error(
+      "cker::CategoricalCrossEntropy: output and y_pred do not have the same batch");
+
+  const auto y_pred = MapAsMatrixWithLastDimAsRows(y_pred_data, y_pred_shape);
+  const auto y_true = MapAsMatrixWithLastDimAsRows(y_true_data, y_true_shape);
+  auto output = MapAsVector(output_data, output_shape);
+
+  output = -(y_true.array() * y_pred.array().cwiseMax(log_threshold<T>()).log()).colwise().sum();
+}
+
+template <typename T>
+inline void CategoricalCrossEntropyGrad(const Shape &y_pred_shape, const T *y_pred_data,
+                                        const Shape &y_true_shape, const T *y_true_data,
+                                        const Shape &grad_shape, T *grad_data)
+{
+  if (y_pred_shape != y_true_shape)
+    throw std::runtime_error(
+      "cker::CategoricalCrossEntropyGrad: y_pred and y_true do not have the same shape");
+  if (y_pred_shape != grad_shape)
+    throw std::runtime_error(
+      "cker::CategoricalCrossEntropyGrad: y_pred and grad do not have the same shape");
+
+  const auto y_pred = MapAsMatrixWithLastDimAsRows(y_pred_data, y_pred_shape);
+  const auto y_true = MapAsMatrixWithLastDimAsRows(y_true_data, y_true_shape);
+  auto grad = MapAsMatrixWithLastDimAsRows(grad_data, grad_shape);
+
+  grad = -(y_true.array() / y_pred.array().cwiseMax(log_threshold<T>()));
 }
 
 } // namespace train

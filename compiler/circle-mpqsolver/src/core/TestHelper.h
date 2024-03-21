@@ -17,8 +17,11 @@
 #ifndef __MPQSOLVER_TEST_HELPER_H__
 #define __MPQSOLVER_TEST_HELPER_H__
 
+#include "DataProvider.h"
+
 #include <luci/IR/CircleNodes.h>
 #include <luci/IR/Module.h>
+#include <luci/test/TestIOGraph.h>
 
 namespace mpqsolver
 {
@@ -59,7 +62,7 @@ public:
  */
 class AddGraph final : public SimpleGraph
 {
-protected:
+private:
   void initInput(loco::Node *input) override;
   void initMinMax(luci::CircleNode *node);
 
@@ -70,6 +73,37 @@ public:
   float _a_max = 1.f;
   luci::CircleAdd *_add = nullptr;
   luci::CircleConst *_beta = nullptr;
+};
+
+class SoftmaxGraphlet
+{
+public:
+  SoftmaxGraphlet() = default;
+  virtual ~SoftmaxGraphlet() = default;
+
+  void init(loco::Graph *g);
+
+protected:
+  void initMinMax(luci::CircleNode *node, float min, float max);
+
+public:
+  luci::CircleAbs *_ifm = nullptr;
+  luci::CircleReduceMax *_max = nullptr;
+  luci::CircleSub *_sub = nullptr;
+  luci::CircleExp *_exp = nullptr;
+  luci::CircleSum *_sum = nullptr;
+  luci::CircleDiv *_div = nullptr;
+
+protected:
+  luci::CircleConst *_softmax_indices = nullptr;
+};
+
+class SoftmaxTestGraph : public luci::test::TestIOGraph, public SoftmaxGraphlet
+{
+public:
+  SoftmaxTestGraph() = default;
+
+  void init(void);
 };
 
 } // namespace models
@@ -98,6 +132,14 @@ std::string makeTemporaryFolder(char *name_template);
 bool isFileExists(const std::string &file_path);
 
 } // namespace io_utils
+
+namespace data_utils
+{
+
+std::unique_ptr<mpqsolver::core::DataProvider> getAllZeroSingleDataProvider();
+
+} // namespace data_utils
+
 } // namespace test
 } // namespace mpqsolver
 

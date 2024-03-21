@@ -17,6 +17,7 @@
 #include "LossInsertionPass.h"
 
 #include "ir/train/TrainableGraph.h"
+#include "ir/train/TrainingInfo.h"
 #include "ir/train/operation/Loss.h"
 
 namespace onert
@@ -32,9 +33,6 @@ void LossInsertionPass::run()
 {
   const auto &loss_info = _training_info->lossInfo();
 
-  ir::operation::Loss::Param param;
-  param.op_type = loss_info.type;
-
   if (_trainable_graph.getOutputs().size() != 1)
   {
     throw std::runtime_error("LossInsertionPass: Not supported multiple outputs");
@@ -48,20 +46,26 @@ void LossInsertionPass::run()
   const auto index = 0;
   const auto &y_pred_index = _trainable_graph.getOutputs().at(index);
   const auto &y_pred = _trainable_graph.operands().at(y_pred_index);
-  const auto &shape = y_pred.shape();
-  const auto &type_info = y_pred.typeInfo();
-  auto y_true_index = _trainable_graph.addOperand(shape, type_info);
+  auto y_true_index = _trainable_graph.addOperand(y_pred.shape(), y_pred.typeInfo());
   ir::OperandIndexSequence inputs{y_pred_index, y_true_index};
 
-  // TODO Consider Reduction
-  //      Some types of Reduction have the same shape y_true and output.
+  ir::Shape output_shape;
+  if (loss_info.reduction_type == ir::train::LossReductionType::Sum ||
+      loss_info.reduction_type == ir::train::LossReductionType::SumOverBatchSize)
+  {
+    output_shape = ir::Shape{1};
+  }
+  else
+  {
+    throw std::runtime_error("LossInsertionPass: Not supported reduction type");
+  }
 
   const ir::TypeInfo float_op(ir::DataType::FLOAT32);
-  auto output_index = _trainable_graph.addOperand(ir::Shape{1}, float_op);
+  auto output_index = _trainable_graph.addOperand(output_shape, float_op);
   ir::OperandIndexSequence outputs{output_index};
 
-  auto loss_op = std::make_unique<ir::operation::Loss>(inputs, outputs, param);
-  auto trainable_loss_op = std::make_unique<ir::train::operation::Loss>(*loss_op);
+  auto loss_op = std::make_unique<ir::operation::Loss>(inputs, outputs);
+  auto trainable_loss_op = std::make_unique<ir::train::operation::Loss>(*loss_op, loss_info);
 
   _trainable_graph.addOperation(std::move(trainable_loss_op));
 

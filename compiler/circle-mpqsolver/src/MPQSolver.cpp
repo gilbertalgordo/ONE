@@ -21,27 +21,23 @@
 
 using namespace mpqsolver;
 
-MPQSolver::MPQSolver(const std::string &input_data_path, float qerror_ratio,
-                     const std::string &input_quantization, const std::string &output_quantization)
-  : _input_data_path(input_data_path), _qerror_ratio(qerror_ratio),
-    _input_quantization(input_quantization), _output_quantization(output_quantization)
+MPQSolver::MPQSolver(const core::Quantizer::Context &ctx)
 {
-  _quantizer = std::make_unique<core::Quantizer>(_input_quantization, _output_quantization);
+  _quantizer = std::make_unique<core::Quantizer>(ctx);
 }
 
-void MPQSolver::set_save_intermediate(const std::string &save_path)
+void MPQSolver::setSaveIntermediate(const std::string &save_path)
 {
-  _hooks = std::make_unique<core::DumpingHooks>(save_path);
+  _hooks = std::make_unique<core::DumpingHooks>(save_path, _quantizer->getContext());
 }
 
-std::unique_ptr<luci::Module> MPQSolver::read_module(const std::string &path)
+std::unique_ptr<luci::Module> MPQSolver::readModule(const std::string &path)
 {
   luci::ImporterEx importerex;
   auto module = importerex.importVerifyModule(path);
   if (module.get() == nullptr)
   {
-    std::cerr << "ERROR: Failed to load " << path << std::endl;
-    return nullptr;
+    throw std::runtime_error("Failed to load model");
   }
 
   return module;

@@ -43,6 +43,11 @@ void allocateMemory(backend::train::MemoryManager *mgr,
   }
 }
 
+inline size_t alignedSize(const size_t size, const uint64_t align)
+{
+  return (((size) + ((align)-1)) & ~((align)-1));
+}
+
 } // namespace
 
 namespace onert
@@ -55,8 +60,8 @@ namespace train
 TensorManager::TensorManager(const std::shared_ptr<TensorRegistry> &reg,
                              const std::string planner_id)
   : _nonconst_mgr{new MemoryManager(planner_id)}, _trainable_mgr{new MemoryManager(planner_id)},
-    _derivative_mgr{new MemoryManager(planner_id)},
-    _gradient_mgr{new MemoryManager(planner_id)}, _tensors{reg}
+    _back_prop_mgr{new MemoryManager(planner_id)}, _gradient_mgr{new MemoryManager(planner_id)},
+    _tensors{reg}
 {
   // DO NOTHING
 }
@@ -73,10 +78,10 @@ void TensorManager::allocateTrainableTensors()
                  std::string{"TRAINABLE TENSOR "});
 }
 
-void TensorManager::allocateDerivativeTensors()
+void TensorManager::allocateBackPropTensors()
 {
-  allocateMemory(_derivative_mgr.get(), _tensors->derivative_tensors(),
-                 std::string{"DERIVATIVE TENSOR "});
+  allocateMemory(_back_prop_mgr.get(), _tensors->back_prop_tensors(),
+                 std::string{"BACK_PROP TENSOR "});
 }
 
 void TensorManager::allocateGradientTensors()
@@ -90,7 +95,7 @@ void TensorManager::claimNonConstPlan(const ir::OperandIndex &index)
   auto tensor = _tensors->getNonConstTensor(index);
   assert(tensor && !tensor->is_dynamic());
 
-  auto size = tensor->total_size();
+  auto size = alignedSize(tensor->total_size(), _align);
   _nonconst_mgr->claimPlan(index, size);
 }
 
@@ -106,7 +111,7 @@ void TensorManager::claimTrainablePlan(const ir::OperandIndex &index)
   auto tensor = _tensors->getTrainableTensor(index);
   assert(tensor && !tensor->is_dynamic());
 
-  auto size = tensor->total_size();
+  auto size = alignedSize(tensor->total_size(), _align);
   _trainable_mgr->claimPlan(index, size);
 }
 
@@ -117,21 +122,20 @@ void TensorManager::releaseTrainablePlan(const ir::OperandIndex &index)
   _trainable_mgr->releasePlan(index);
 }
 
-void TensorManager::claimDerivativePlan(const ir::OperandIndex &index)
+void TensorManager::claimBackPropPlan(const ir::OperandIndex &index)
 {
-  auto tensor = _tensors->getDerivativeTensor(index);
+  auto tensor = _tensors->getBackPropTensor(index);
   assert(tensor && !tensor->is_dynamic());
 
-  auto size = tensor->total_size();
-  _derivative_mgr->claimPlan(index, size);
+  auto size = alignedSize(tensor->total_size(), _align);
+  _back_prop_mgr->claimPlan(index, size);
 }
 
-void TensorManager::releaseDerivativePlan(const ir::OperandIndex &index)
+void TensorManager::releaseBackPropPlan(const ir::OperandIndex &index)
 {
-  assert(_tensors->getDerivativeTensor(index) &&
-         !_tensors->getDerivativeTensor(index)->is_dynamic());
+  assert(_tensors->getBackPropTensor(index) && !_tensors->getBackPropTensor(index)->is_dynamic());
 
-  _derivative_mgr->releasePlan(index);
+  _back_prop_mgr->releasePlan(index);
 }
 
 void TensorManager::claimGradientPlan(const ir::OperandIndex &index)
@@ -139,7 +143,7 @@ void TensorManager::claimGradientPlan(const ir::OperandIndex &index)
   auto tensor = _tensors->getGradientTensor(index);
   assert(tensor && !tensor->is_dynamic());
 
-  auto size = tensor->total_size();
+  auto size = alignedSize(tensor->total_size(), _align);
   _gradient_mgr->claimPlan(index, size);
 }
 

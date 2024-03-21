@@ -26,8 +26,10 @@ namespace train
 {
 
 TensorBuilder::TensorBuilder(const std::shared_ptr<TensorRegistry> &tensor_reg,
+                             const exec::train::optimizer::Optimizer *optimizer,
                              const std::string planner_id)
-  : _tensor_reg{tensor_reg}, _tensor_mgr{new TensorManager(tensor_reg, planner_id)}
+  : _tensor_reg{tensor_reg}, _tensor_mgr{new TensorManager(tensor_reg, planner_id)},
+    _optimizer{optimizer}
 {
   /* empty */
 }
@@ -72,11 +74,20 @@ void TensorBuilder::registerBackwardTensorInfo(const ir::OperandIndex &index,
   {
     auto tensor = std::make_unique<GradientTensor>(info, layout);
     _tensor_reg->setGradientTensor(index, std::move(tensor));
+
+    // Initialize tensors for gradient variables
+    for (uint32_t i = 0; i < _optimizer->getVarCount(); ++i)
+    {
+      // TODO Optimize memory
+      auto tensor = std::make_unique<Tensor>(info, layout);
+      tensor->setBuffer(std::make_shared<basic::Allocator>(tensor->total_size()));
+      _tensor_reg->getTrainableTensor(index)->appendOptVar(std::move(tensor));
+    }
   }
   else
   {
-    auto tensor = std::make_unique<DerivativeTensor>(info, layout);
-    _tensor_reg->setDerivativeTensor(index, std::move(tensor));
+    auto tensor = std::make_unique<BackPropTensor>(info, layout);
+    _tensor_reg->setBackPropTensor(index, std::move(tensor));
   }
 }
 
@@ -107,7 +118,7 @@ void TensorBuilder::notifyBackwardFirstUse(const ir::OperandIndex &index)
   }
   else
   {
-    _tensor_mgr->claimDerivativePlan(index);
+    _tensor_mgr->claimBackPropPlan(index);
   }
 }
 
@@ -129,7 +140,7 @@ void TensorBuilder::allocate(void)
 
 void TensorBuilder::allocateBackward(void)
 {
-  _tensor_mgr->allocateDerivativeTensors();
+  _tensor_mgr->allocateBackPropTensors();
   _tensor_mgr->allocateGradientTensors();
 }
 

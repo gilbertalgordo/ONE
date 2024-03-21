@@ -331,7 +331,7 @@ bool is_valid_params(loco::Graph *g, LayerParams &lps)
   // all name should be found in graph
   for (auto &lp : lps)
   {
-    auto name = lp->name;
+    auto &name = lp->name;
     bool found = false;
     for (auto node : loco::active_nodes(loco::output_nodes(g)))
     {
@@ -428,7 +428,7 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     // Check dtype/granularity of layer params
     for (auto layer_param : layer_params)
     {
-      auto name = layer_param->name;
+      const auto &name = layer_param->name;
       if (!in_array(to_lower_case(layer_param->dtype), fakeq_supported_output_model_dtype))
       {
         throw std::runtime_error("Unsupported dtype in " + name + ". List of supported dtype: " +
@@ -502,6 +502,9 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     bool TF_style_maxpool =
       _options->param(Options::AlgorithmParameters::Quantize_TF_style_maxpool) == "True";
 
+    bool save_min_max =
+      _options->param(Options::AlgorithmParameters::Quantize_save_min_max) == "True";
+
     auto layer_params = _options->layer_params(Options::AlgorithmParameters::Quantize_layer_params);
     auto layer_params_set = _options->layer_params_set();
 
@@ -543,7 +546,7 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     // Check dtype/granularity of layer params
     for (auto layer_param : layer_params)
     {
-      auto name = layer_param->name;
+      const auto &name = layer_param->name;
       if (!in_array(to_lower_case(layer_param->dtype), qwmm_supported_output_model_dtype))
       {
         throw std::runtime_error("Unsupported dtype in " + name + ". List of supported dtype: " +
@@ -576,6 +579,7 @@ void CircleQuantizer::quantize(loco::Graph *g) const
       ctx->input_types = input_types;
       ctx->output_types = output_types;
       ctx->TF_style_maxpool = TF_style_maxpool;
+      ctx->save_min_max = save_min_max;
 
       for (auto layer_param : layer_params)
       {

@@ -64,11 +64,13 @@ private:
     REG_TFL_OP(BATCH_MATMUL, TFliteOpBatchMatMul);
     REG_TFL_OP(BATCH_TO_SPACE_ND, TFliteOpBatchToSpaceND);
     REG_TFL_OP(BIDIRECTIONAL_SEQUENCE_LSTM, TFliteOpBidirectionalSequenceLSTM);
+    REG_TFL_OP(BROADCAST_TO, TFliteOpBroadcastTo);
     REG_TFL_OP(CAST, TFliteOpCast);
     REG_TFL_OP(CEIL, TFliteOpCeil);
     REG_TFL_OP(CONCATENATION, TFliteOpConcatenation);
     REG_TFL_OP(CONV_2D, TFliteOpConv2D);
     REG_TFL_OP(COS, TFliteOpCos);
+    REG_TFL_OP(CUMSUM, TFliteOpCumsum);
     REG_TFL_OP(DEPTH_TO_SPACE, TFliteOpDepthToSpace);
     REG_TFL_OP(DEPTHWISE_CONV_2D, TFliteOpDepthwiseConv2D);
     REG_TFL_OP(DEQUANTIZE, TFliteOpDequantize);
@@ -166,6 +168,7 @@ private:
     REG_TFL_OP(UNIQUE, TFliteOpUnique);
     REG_TFL_OP(UNPACK, TFliteOpUnpack);
     REG_TFL_OP(WHERE, TFliteOpWhere);
+    REG_TFL_OP(WHILE, TFliteOpWhile);
     REG_TFL_OP(ZEROS_LIKE, TFliteOpZerosLike);
 
 #undef REG_TFL_OP

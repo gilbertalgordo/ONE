@@ -18,7 +18,7 @@
 #define __MPQSOLVER_MPQSOLVER_SOLVER_H__
 
 #include "core/Quantizer.h"
-#include <core/DumpingHooks.h>
+#include "core/DumpingHooks.h"
 
 #include <luci/IR/CircleNodes.h>
 
@@ -31,13 +31,8 @@ namespace mpqsolver
 class MPQSolver
 {
 public:
-  /**
-   * @brief construct Solver using input_data_path for .h5 file,
-   * qerror_ratio to set target qerror, and input_quantization/output_quantization to set
-   * quantization type at input/output respectively
-   */
-  MPQSolver(const std::string &input_data_path, float qerror_ratio,
-            const std::string &input_quantization, const std::string &output_quantization);
+  MPQSolver(const core::Quantizer::Context &ctx);
+
   virtual ~MPQSolver() = default;
 
   /**
@@ -48,17 +43,15 @@ public:
   /**
    * @brief set all intermediate artifacts to be saved
    */
-  void set_save_intermediate(const std::string &save_path);
+  void setSaveIntermediate(const std::string &save_path);
 
 protected:
-  std::unique_ptr<luci::Module> read_module(const std::string &path);
+  std::unique_ptr<luci::Module> readModule(const std::string &path);
 
 protected:
-  std::string _input_data_path;
   std::string _input_quantization;
   std::string _output_quantization;
   std::unique_ptr<core::Quantizer> _quantizer;
-  float _qerror_ratio = 0.f; // quantization error ratio
   std::unique_ptr<core::DumpingHooks> _hooks;
 };
 
