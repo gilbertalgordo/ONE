@@ -126,6 +126,7 @@ private:
   void visit(const ir::operation::Comparison &op) override;
   void visit(const ir::operation::Concat &op) override;
   void visit(const ir::operation::Conv2D &op) override;
+  void visit(const ir::operation::DepthwiseConv2D &op) override;
   void visit(const ir::operation::ElementwiseActivation &op) override;
   void visit(const ir::operation::ElementwiseBinary &op) override;
   void visit(const ir::operation::ElementwiseUnary &op) override;
@@ -143,6 +144,7 @@ private:
   void visit(const ir::operation::Pack &op) override;
   void visit(const ir::operation::Pad &op) override;
   void visit(const ir::operation::Permute &op) override;
+  void visit(const ir::operation::Pool2D &op) override;
   void visit(const ir::operation::Pow &op) override;
   void visit(const ir::operation::Range &op) override;
   void visit(const ir::operation::Reduce &op) override;

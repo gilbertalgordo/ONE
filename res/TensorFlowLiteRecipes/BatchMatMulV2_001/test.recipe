@@ -14,13 +14,14 @@ operand {
   shape { dim: 2 dim: 2 dim: 2 dim: 4 }
 }
 operation {
-  type: "BatchMatMulV2"
+  type: "Custom"
   batch_matmul_options {
       adj_x : true
   }
   input: "ifm1"
   input: "ifm2"
   output: "ofm"
+  custom_code: "BatchMatMulV2"
 }
 input: "ifm1"
 input: "ifm2"

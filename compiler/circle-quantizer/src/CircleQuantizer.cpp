@@ -116,16 +116,16 @@ LayerParamsSet read_layer_params_set(std::string &filename)
 
   auto layers = qcr.root()["layers"];
   // alternate names
-  for (auto layer : layers)
+  for (const auto &layer : layers)
   {
     const std::string key_alt_names = "alternate";
     if (layer.isMember(key_alt_names))
     {
       auto alternate = layer[key_alt_names];
-      for (auto altkey : alternate.getMemberNames())
+      for (const auto &altkey : alternate.getMemberNames())
       {
         LayerParams lps;
-        for (auto altvalue : alternate[altkey])
+        for (const auto &altvalue : alternate[altkey])
         {
           auto l = std::make_shared<LayerParam>();
           {
@@ -179,6 +179,8 @@ int entry(int argc, char **argv)
 
   const std::string gpd = "--generate_profile_data";
 
+  const std::string save_min_max = "--save_min_max";
+
   arser::Arser arser("circle-quantizer provides circle model quantization");
 
   arser::Helper::add_version(arser, print_version);
@@ -203,6 +205,11 @@ int entry(int argc, char **argv)
     .default_value(false)
     .help("Force MaxPool Op to have the same input/output quantparams. NOTE: This feature can "
           "degrade accuracy of some models");
+
+  arser.add_argument(save_min_max)
+    .nargs(0)
+    .default_value(false)
+    .help("Save recorded min/max values.");
 
   arser.add_argument(fake_quant)
     .nargs(0)
@@ -350,6 +357,9 @@ int entry(int argc, char **argv)
 
     if (arser[tf_maxpool] and arser.get<bool>(tf_maxpool))
       options->param(AlgorithmParameters::Quantize_TF_style_maxpool, "True");
+
+    if (arser[save_min_max] and arser.get<bool>(save_min_max))
+      options->param(AlgorithmParameters::Quantize_save_min_max, "True");
 
     if (arser[cfg])
     {

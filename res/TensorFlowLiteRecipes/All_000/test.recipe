@@ -18,13 +18,14 @@ operand {
   }
 }
 operation {
-  type: "All"
+  type: "Custom"
   all_options {
     keep_dims: false
   }
   input: "ifm"
   input: "All/reduction_indices"
   output: "ofm"
+  custom_code: "All"
 }
 input: "ifm"
 output: "ofm"

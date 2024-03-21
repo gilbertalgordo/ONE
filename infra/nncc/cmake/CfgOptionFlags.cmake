@@ -14,6 +14,7 @@ option(DOWNLOAD_EIGEN "Download Eigen source" ON)
 option(DOWNLOAD_FARMHASH "Download farmhash source" ON)
 option(DOWNLOAD_GEMMLOWP "Download GEMM low precesion library source" ON)
 option(DOWNLOAD_RUY "Download ruy source" ON)
+option(DOWNLOAD_THREADPOOL "Download Threadpool source" ON)
 option(DOWNLOAD_NEON2SSE "Download NEON2SSE library source" ON)
 option(DOWNLOAD_GFLAGS "Download GFlags source" OFF)
 option(DOWNLOAD_FLATBUFFERS "Download FlatBuffers source" ON)
@@ -57,3 +58,7 @@ option(NNCC_LIBRARY_NO_PIC "Disable PIC option for libraries" OFF)
 # This option enables installation of one-import-pytorch utility and
 # generation of related testsuite.
 option(ENABLE_ONE_IMPORT_PYTORCH "Enable deploy of one-cmds pytoch importer and related tests" OFF)
+
+# Enable exclusion of a module in compiler with exclude.me file
+# This option is ignored when BUILD_WHITELIST is given
+option(ENABLE_EXCLUDE_ME "Exclude compiler module with exclude.me" ON)

@@ -27,6 +27,12 @@ struct MeanParams
   int16_t axis[4];
 };
 
+struct ResizeNearestNeighborParams
+{
+  bool align_corners;
+  bool half_pixel_centers;
+};
+
 struct PadParams
 {
   int8_t left_padding_count;
@@ -39,6 +45,8 @@ struct FullyConnectedParams
 {
   int32_t input_offset;
   int32_t weights_offset;
+  const float *weights_scales;
+  bool is_channel_wise_quant;
   int32_t output_offset;
   int32_t output_multiplier;
   int output_shift;

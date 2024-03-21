@@ -89,9 +89,11 @@ DataChefRegistry &data_chef_registry(const circlechef::TensorType &type)
   static DataChefRegistry s64;
   static DataChefRegistry fp32;
   static DataChefRegistry u8;
+  static DataChefRegistry u4;
   static DataChefRegistry string;
   static DataChefRegistry boolean;
   static DataChefRegistry s16;
+  static DataChefRegistry s4;
 
   switch (type)
   {
@@ -103,12 +105,16 @@ DataChefRegistry &data_chef_registry(const circlechef::TensorType &type)
       return fp32;
     case circlechef::UINT8:
       return u8;
+    case circlechef::UINT4:
+      return u4;
     case circlechef::STRING:
       return string;
     case circlechef::BOOL:
       return boolean;
     case circlechef::INT16:
       return s16;
+    case circlechef::INT4:
+      return s4;
     default:
       break;
   }
@@ -135,10 +141,10 @@ gather_builtincode_map(const ::circlechef::ModelRecipe &model_recipe)
 
   for (const auto &operation : model_recipe.operation())
   {
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-    if (op_chef->code() == circle::BuiltinOperator_CUSTOM)
+    if (operation.type() == "Custom")
       continue;
 
+    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
     // Various operation version is unified as the highest version among them
     if (builtin_map.find(op_chef->code()) == builtin_map.end() ||
         builtin_map[op_chef->code()] < operation.version())
@@ -151,10 +157,10 @@ gather_builtincode_map(const ::circlechef::ModelRecipe &model_recipe)
     const auto &graph = model_recipe.graph(g);
     for (const auto &operation : graph.operation())
     {
-      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-      if (op_chef->code() == circle::BuiltinOperator_CUSTOM)
+      if (operation.type() == "Custom")
         continue;
 
+      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
       // Various operation version is unified as the highest version among them
       if (builtin_map.find(op_chef->code()) == builtin_map.end() ||
           builtin_map[op_chef->code()] < operation.version())
@@ -171,9 +177,11 @@ std::set<std::string> gather_customcode_set(const ::circlechef::ModelRecipe &mod
   std::set<std::string> customcode_set;
   for (const auto &operation : model_recipe.operation())
   {
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-    if (op_chef->code() == circle::BuiltinOperator_CUSTOM)
-      customcode_set.insert(operation.type());
+    if (operation.type() == "Custom")
+    {
+      assert(not operation.custom_code().empty());
+      customcode_set.insert(operation.custom_code());
+    }
   }
 
   // Add ops used in Graphs(subgraphs)
@@ -182,9 +190,11 @@ std::set<std::string> gather_customcode_set(const ::circlechef::ModelRecipe &mod
     const auto &graph = model_recipe.graph(g);
     for (const auto &operation : graph.operation())
     {
-      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-      if (op_chef->code() == circle::BuiltinOperator_CUSTOM)
-        customcode_set.insert(operation.type());
+      if (operation.type() == "Custom")
+      {
+        assert(not operation.custom_code().empty());
+        customcode_set.insert(operation.custom_code());
+      }
     }
   }
 
@@ -296,6 +306,34 @@ template <typename T> void cook_graph(const T &graph, CookParams &cp)
       // Create Data
       int32_t count = (element_count(dims) > 0) ? element_count(dims) : filler.arg_size();
       auto data_vec = chef->generate(count);
+      // pack for INT4 and replace data_vec
+      if (operand.type() == circlechef::TensorType::INT4)
+      {
+        uint32_t packed = (count + 1) / 2;
+        std::vector<uint8_t> data_packed(packed);
+        for (uint32_t idx = 0; idx < packed; ++idx)
+        {
+          uint32_t sidx = idx * 2;
+          data_packed[idx] = data_vec[sidx++] & 0x0f;
+          if (sidx < count)
+            data_packed[idx] |= data_vec[sidx] << 4;
+        }
+        data_vec = data_packed;
+      }
+      // pack for UINT4 and replace data_vec
+      else if (operand.type() == circlechef::TensorType::UINT4)
+      {
+        uint32_t packed = (count + 1) / 2;
+        std::vector<uint8_t> data_packed(packed);
+        for (uint32_t idx = 0; idx < packed; ++idx)
+        {
+          uint32_t sidx = idx * 2;
+          data_packed[idx] = data_vec[sidx++] & 0x0f;
+          if (sidx < count)
+            data_packed[idx] |= data_vec[sidx] << 4;
+        }
+        data_vec = data_packed;
+      }
       auto data = flatbuffer_builder->CreateVector(data_vec);
 
       // Create Buffer
@@ -418,7 +456,11 @@ template <typename T> void cook_graph(const T &graph, CookParams &cp)
   {
     assert(operation.has_type());
 
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
+    std::string op_type = operation.type();
+    if (not operation.custom_code().empty())
+      op_type = operation.custom_code();
+
+    auto op_chef = op_chef_registry().lookup(op_type).create(&operation);
 
     // Create 'inputs'
     std::vector<int32_t> input_vec = as_dataset(operation.input()).map(lookup).vectorize();

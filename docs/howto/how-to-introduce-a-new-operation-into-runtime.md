@@ -243,7 +243,7 @@ This module generates IR from a model. There are two kinds of frontend: Loader a
 This is where the common parts of loaders are implemented.
 
 1. Add to base_loader to load new operation and to generate IR from it
-- [base_loader](/runtime/onert/frontend/base_loader/include/base_loader.h)
+- [base_loader](/runtime/onert/core/src/loader/base_loader.h)
 
 ```cpp
     case BuiltinOperator::BuiltinOperator_SELECT:
@@ -278,7 +278,7 @@ If you want new operation to be loaded on only Circle Loader, you only need to i
 ### NNAPI
 
 1. Add to the OperationFactory to generate IR of new operation
-- [OperationFactory](/runtime/onert/frontend/nnapi/wrapper/OperationFactory.cc)
+- [OperationFactory](/runtime/onert/api/nnapi/wrapper/OperationFactory.cc)
 
 ```cpp
   _map[ANEURALNETWORKS_SELECT] = [](const OperationFactory::Param &init_param, Operands &) {
@@ -470,4 +470,3 @@ void ConstantInitializer::visit(const ir::operation::Conv2D &node)
 - `Select` operation
   - Simple explanation : `Output[i] = Condition[i] ? input1[i] : input2[i]`
   - PR : https://github.com/Samsung/ONE/pull/XXX
-

@@ -55,7 +55,7 @@ std::unique_ptr<exec::FunctionSequence> KernelGenerator::generate(ir::OperationI
   assert(_return_fn); // _return_fn must have been generated
   ret->append(std::move(_return_fn));
 
-  for (auto &&ind : (op.getInputs() | ir::Remove::UNDEFINED) + op.getOutputs())
+  for (const auto &ind : (op.getInputs() | ir::Remove::UNDEFINED) + op.getOutputs())
   {
     auto portable_tensor = _tensor_reg->getPortableTensor(ind);
     if (portable_tensor)
@@ -77,10 +77,9 @@ KernelGenerator::KernelGenerator(
   const std::shared_ptr<basic::TensorRegistry> &tensor_reg,
   const std::shared_ptr<backend::custom::IKernelBuilder> &kernel_builder,
   const std::shared_ptr<ExternalContext> &external_context)
-  : basic::KernelGeneratorBase{graph},
-    _ctx(graph.operands()), _operations_ctx{graph.operations()}, _current_layout{graph.layout()},
-    _tensor_builder(tensor_builder), _tensor_reg{tensor_reg}, _kernel_builder(kernel_builder),
-    _external_context(external_context)
+  : basic::KernelGeneratorBase{graph}, _ctx(graph.operands()), _operations_ctx{graph.operations()},
+    _current_layout{graph.layout()}, _tensor_builder(tensor_builder), _tensor_reg{tensor_reg},
+    _kernel_builder(kernel_builder), _external_context(external_context)
 {
   // DO NOTHING
 }
@@ -101,7 +100,7 @@ void KernelGenerator::visit(const ir::operation::Conv2D &node)
 
   const auto stride = node.param().stride;
   const auto activation = node.param().activation;
-  const auto param_padding = node.param().padding;
+  const auto &param_padding = node.param().padding;
   const auto dilation = node.param().dilation;
   auto fn = std::make_unique<ops::ConvolutionLayer>();
 

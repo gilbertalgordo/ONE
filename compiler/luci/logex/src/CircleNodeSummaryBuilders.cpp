@@ -30,6 +30,8 @@ std::string to_str(loco::DataType type)
 {
   switch (type)
   {
+    case loco::DataType::U4:
+      return "UINT4";
     case loco::DataType::U8:
       return "UINT8";
     case loco::DataType::U16:
@@ -39,6 +41,8 @@ std::string to_str(loco::DataType type)
     case loco::DataType::U64:
       return "UINT64";
 
+    case loco::DataType::S4:
+      return "INT4";
     case loco::DataType::S8:
       return "INT8";
     case loco::DataType::S16:
@@ -343,6 +347,25 @@ void CircleBidirectionalSequenceLSTMSummaryBuilder::build_attributes(const luci:
   s.args().append("asymmetric_quantize_inputs", to_str(lstm->asymmetric_quantize_inputs()));
 }
 
+std::vector<std::string> CircleGRUSummaryBuilder::get_input_names(const luci::CircleNode *)
+{
+  return {"input",        "hidden_hidden",     "hidden_hidden_bias",
+          "hidden_input", "hidden_input_bias", "state"};
+}
+
+void CircleGRUSummaryBuilder::build_attributes(const luci::CircleNode *node, locop::NodeSummary &s)
+{
+  auto gru = loco::must_cast<const luci::CircleGRU *>(node);
+  s.args().append("fused_act_function", to_str(gru->fusedActivationFunction()));
+  s.args().append("return_sequence", to_str(gru->returnSequences()));
+  s.args().append("time_major", to_str(gru->timeMajor()));
+}
+
+std::vector<std::string> CircleBroadcastToSummaryBuilder::get_input_names(const luci::CircleNode *)
+{
+  return {"input", "shape"};
+}
+
 std::vector<std::string> CircleCastSummaryBuilder::get_input_names(const luci::CircleNode *)
 {
   return {"x"};
@@ -423,6 +446,19 @@ void CircleConv2DSummaryBuilder::build_attributes(const luci::CircleNode *node,
   s.args().append("dilation(h,w)", to_str(conv2d->dilation()));
   s.args().append("padding", to_str(conv2d->padding()));
   s.args().append("fused_activation_function", to_str(conv2d->fusedActivationFunction()));
+}
+
+std::vector<std::string> CircleCumsumSummaryBuilder::get_input_names(const luci::CircleNode *)
+{
+  return {"input", "axis"};
+}
+
+void CircleCumsumSummaryBuilder::build_attributes(const luci::CircleNode *node,
+                                                  locop::NodeSummary &s)
+{
+  auto cumsum = loco::must_cast<const luci::CircleCumSum *>(node);
+  s.args().append("exclusive", to_str(cumsum->exclusive()));
+  s.args().append("reverse", to_str(cumsum->reverse()));
 }
 
 std::vector<std::string> CircleCustomSummaryBuilder::get_input_names(const luci::CircleNode *node)

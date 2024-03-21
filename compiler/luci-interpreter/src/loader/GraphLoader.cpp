@@ -54,10 +54,14 @@ const void *getNodeData(const luci::CircleConst *node, size_t *data_size)
 {
   switch (node->dtype())
   {
+    case DataType::U4:
+      return getNodeDataImpl<DataType::U4>(node, data_size);
     case DataType::U8:
       return getNodeDataImpl<DataType::U8>(node, data_size);
     case DataType::FLOAT32:
       return getNodeDataImpl<DataType::FLOAT32>(node, data_size);
+    case DataType::S4:
+      return getNodeDataImpl<DataType::S4>(node, data_size);
     case DataType::S8:
       return getNodeDataImpl<DataType::S8>(node, data_size);
     case DataType::S16:
@@ -69,7 +73,7 @@ const void *getNodeData(const luci::CircleConst *node, size_t *data_size)
     case DataType::BOOL:
       return getNodeDataImpl<DataType::BOOL>(node, data_size);
     default:
-      throw std::runtime_error("Unsupported type.");
+      throw std::runtime_error("luci-intp (getNodeData) Unsupported type.");
   }
 }
 

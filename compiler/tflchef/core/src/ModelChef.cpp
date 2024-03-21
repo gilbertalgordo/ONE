@@ -94,6 +94,7 @@ DataChefRegistry &data_chef_registry(const tflchef::TensorType &type)
   static DataChefRegistry s16;
   static DataChefRegistry fp16;
   static DataChefRegistry s8;
+  static DataChefRegistry s4;
 
   switch (type)
   {
@@ -115,6 +116,8 @@ DataChefRegistry &data_chef_registry(const tflchef::TensorType &type)
       return s16;
     case tflchef::INT8:
       return s8;
+    case tflchef::INT4:
+      return s4;
     default:
       break;
   }
@@ -141,10 +144,10 @@ gather_builtincode_map(const ::tflchef::ModelRecipe &model_recipe)
 
   for (const auto &operation : model_recipe.operation())
   {
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-    if (op_chef->code() == tflite::BuiltinOperator_CUSTOM)
+    if (operation.type() == "Custom")
       continue;
 
+    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
     // Various operation version is unified as the highest version among them
     if (builtin_map.find(op_chef->code()) == builtin_map.end() ||
         builtin_map[op_chef->code()] < operation.version())
@@ -157,10 +160,10 @@ gather_builtincode_map(const ::tflchef::ModelRecipe &model_recipe)
     const auto &graph = model_recipe.graph(g);
     for (const auto &operation : graph.operation())
     {
-      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-      if (op_chef->code() == tflite::BuiltinOperator_CUSTOM)
+      if (operation.type() == "Custom")
         continue;
 
+      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
       // Various operation version is unified as the highest version among them
       if (builtin_map.find(op_chef->code()) == builtin_map.end() ||
           builtin_map[op_chef->code()] < operation.version())
@@ -177,9 +180,11 @@ std::set<std::string> gather_customcode_set(const ::tflchef::ModelRecipe &model_
   std::set<std::string> customcode_set;
   for (const auto &operation : model_recipe.operation())
   {
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-    if (op_chef->code() == tflite::BuiltinOperator_CUSTOM)
-      customcode_set.insert(operation.type());
+    if (operation.type() == "Custom")
+    {
+      assert(not operation.custom_code().empty());
+      customcode_set.insert(operation.custom_code());
+    }
   }
 
   // Add ops used in Graphs(subgraphs)
@@ -188,9 +193,11 @@ std::set<std::string> gather_customcode_set(const ::tflchef::ModelRecipe &model_
     const auto &graph = model_recipe.graph(g);
     for (const auto &operation : graph.operation())
     {
-      auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
-      if (op_chef->code() == tflite::BuiltinOperator_CUSTOM)
-        customcode_set.insert(operation.type());
+      if (operation.type() == "Custom")
+      {
+        assert(not operation.custom_code().empty());
+        customcode_set.insert(operation.custom_code());
+      }
     }
   }
 
@@ -346,6 +353,7 @@ template <typename T> std::map<std::string, int32_t> cook_graph(const T &graph, 
       {
         assert(not operand.has_sparsity());
         assert(operand.has_shape());
+        assert(operand.type() != tflchef::TensorType::INT4);
 
         const int32_t dims_count = dims.size();
         std::vector<int> traversal_order_vec;
@@ -449,6 +457,21 @@ template <typename T> std::map<std::string, int32_t> cook_graph(const T &graph, 
       }
       else
       {
+        // pack for INT4 and replace data_vec
+        if (operand.type() == tflchef::TensorType::INT4)
+        {
+          uint32_t packed = (count + 1) / 2;
+          std::vector<uint8_t> data_packed(packed);
+          for (uint32_t idx = 0; idx < packed; ++idx)
+          {
+            uint32_t sidx = idx * 2;
+            data_packed[idx] = data_vec[sidx++] & 0x0f;
+            if (sidx < count)
+              data_packed[idx] |= data_vec[sidx] << 4;
+          }
+          data_vec = data_packed;
+        }
+
         auto data = flatbuffer_builder->CreateVector(data_vec);
 
         // Create Buffer
@@ -619,7 +642,11 @@ template <typename T> std::map<std::string, int32_t> cook_graph(const T &graph, 
   {
     assert(operation.has_type());
 
-    auto op_chef = op_chef_registry().lookup(operation.type()).create(&operation);
+    std::string op_type = operation.type();
+    if (not operation.custom_code().empty())
+      op_type = operation.custom_code();
+
+    auto op_chef = op_chef_registry().lookup(op_type).create(&operation);
 
     // Create 'inputs'
     std::vector<int32_t> input_vec = as_dataset(operation.input()).map(lookup).vectorize();
@@ -650,7 +677,9 @@ template <typename T> std::map<std::string, int32_t> cook_graph(const T &graph, 
     // custom operator
     else
     {
-      auto op_it = std::find(custom_code_vec.begin(), custom_code_vec.end(), operation.type());
+      assert(not operation.custom_code().empty());
+      auto custom_code = operation.custom_code();
+      auto op_it = std::find(custom_code_vec.begin(), custom_code_vec.end(), custom_code);
       assert(op_it != custom_code_vec.end());
       opcode_index = builtin_code_map.size();
       opcode_index += std::distance(custom_code_vec.begin(), op_it);

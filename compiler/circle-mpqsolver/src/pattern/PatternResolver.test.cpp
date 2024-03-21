@@ -16,6 +16,8 @@
 
 #include "PatternResolver.h"
 
+#include "core/TestHelper.h"
+
 #include <luci/CircleQuantizer.h>
 #include <luci/IR/CircleNodes.h>
 
@@ -166,5 +168,42 @@ TEST(LayerNormPatternResolverTest, resolve_pattern_NEG)
 {
   std::map<luci::CircleNode *, LayerParam> params;
   mpqsolver::pattern::Q8LayerNormWithQ16VarianceResolver resolver;
+  EXPECT_ANY_THROW(resolver.resolve(nullptr));
+}
+
+TEST(SoftmaxResolverTest, resolve_pattern)
+{
+  auto m = luci::make_module();
+  mpqsolver::test::models::SoftmaxTestGraph g;
+  g.init();
+  g.transfer_to(m.get());
+
+  std::map<luci::CircleNode *, LayerParam> params;
+  mpqsolver::pattern::Q8SoftmaxWithQ16SubExpResolver resolver;
+  EXPECT_NO_THROW({ params = resolver.resolve(m.get()); });
+
+  std::set<luci::CircleNode *> q16_nodes = {g._sub, g._exp};
+  std::set<luci::CircleNode *> q8_nodes = {g._ifm, g._max, g._sum, g._div};
+
+  // params of all valid layers are set
+  EXPECT_EQ(params.size(), q16_nodes.size() + q8_nodes.size());
+
+  for (auto param : params)
+  {
+    // params of all layers are set as prescribed
+    if (q16_nodes.find(param.first) != q16_nodes.end())
+    {
+      EXPECT_STREQ(param.second.dtype.c_str(), "int16");
+    }
+    else if (q8_nodes.find(param.first) != q8_nodes.end())
+    {
+      EXPECT_STREQ(param.second.dtype.c_str(), "uint8");
+    }
+  }
+}
+
+TEST(SoftmaxPatternResolverTest, resolve_pattern_NEG)
+{
+  mpqsolver::pattern::Q8SoftmaxWithQ16SubExpResolver resolver;
   EXPECT_ANY_THROW(resolver.resolve(nullptr));
 }

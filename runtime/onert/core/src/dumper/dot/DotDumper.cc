@@ -213,7 +213,7 @@ void DotDumper::dump(const ir::Graph &graph, const std::string &tag)
   dump_to_file(dot_operands, dot_operations, tag);
 }
 
-// TODO Support derivative tensors
+// TODO Support tensors for training
 void DotDumper::dump(const compiler::ILoweredGraph &lowered_graph, const std::string &tag)
 {
   if (_level == Level::OFF)
@@ -226,6 +226,11 @@ void DotDumper::dump(const compiler::ILoweredGraph &lowered_graph, const std::st
   update_lower_info(lowered_graph, &dot_operands);
   update_lower_info(lowered_graph, &dot_operations);
   dump_to_file(dot_operands, dot_operations, tag);
+}
+
+void DotDumper::dump(const ir::train::TrainableGraph &graph, const std::string &tag)
+{
+  dump(graph.graph(), tag);
 }
 
 } // namespace dot

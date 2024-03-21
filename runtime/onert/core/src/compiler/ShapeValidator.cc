@@ -119,7 +119,7 @@ void ShapeValidator::visit(const ir::operation::BCQFullyConnected &node)
     node.getInputs().at(ir::operation::BCQFullyConnected::Input::WEIGHTS_BINARY)};
   const auto weight_cluster_index{
     node.getInputs().at(ir::operation::BCQFullyConnected::Input::WEIGHTS_CLUSTERS)};
-  // const auto bias_index{node.getInputs().at(ir::operation::BCQFullyConnected::Input::BIAS)};
+  const auto bias_index{node.getInputs().at(ir::operation::BCQFullyConnected::Input::BIAS)};
 
   OP_REQUIRES(operands.at(ifm_index).shape().rank() == 2);
   OP_REQUIRES(operands.at(ofm_index).shape().rank() == 2);
@@ -134,7 +134,7 @@ void ShapeValidator::visit(const ir::operation::BCQFullyConnected &node)
 
   // more shape validation will be done inside kernel.
 
-  // TODO Check bias dimension (can be null tensor)
+  OP_REQUIRES(!operands.exist(bias_index) || operands.at(bias_index).shape().rank() == 1);
 }
 
 void ShapeValidator::visit(const ir::operation::BCQGather &node)
@@ -162,9 +162,45 @@ void ShapeValidator::visit(const ir::operation::BCQGather &node)
   // more shape validation will be done inside kernel.
 }
 
+void ShapeValidator::visit(const ir::operation::Conv2D &node)
+{
+  const auto &operands = _graph.operands();
+  const auto ofm_index{node.getOutputs().at(0)};
+  if (operands.at(ofm_index).info().isDynamic())
+    return;
+
+  const auto bias_index{node.getInputs().at(ir::operation::Conv2D::Input::BIAS)};
+
+  OP_REQUIRES(operands.at(bias_index).shape().rank() == 1);
+}
+
 void ShapeValidator::visit(const ir::operation::Comparison &)
 {
   // TODO Shape validation of comparison
+}
+
+void ShapeValidator::visit(const ir::operation::DepthwiseConv2D &node)
+{
+  const auto &operands = _graph.operands();
+  const auto ofm_index{node.getOutputs().at(0)};
+  if (operands.at(ofm_index).info().isDynamic())
+    return;
+
+  const auto bias_index{node.getInputs().at(ir::operation::DepthwiseConv2D::Input::BIAS)};
+
+  OP_REQUIRES(!operands.exist(bias_index) || operands.at(bias_index).shape().rank() == 1);
+}
+
+void ShapeValidator::visit(const ir::operation::FullyConnected &node)
+{
+  const auto &operands = _graph.operands();
+  const auto ofm_index{node.getOutputs().at(0)};
+  if (operands.at(ofm_index).info().isDynamic())
+    return;
+
+  const auto bias_index{node.getInputs().at(ir::operation::FullyConnected::Input::BIAS)};
+
+  OP_REQUIRES(!operands.exist(bias_index) || operands.at(bias_index).shape().rank() == 1);
 }
 
 void ShapeValidator::visit(const ir::operation::Softmax &node)
@@ -227,9 +263,9 @@ void ShapeValidator::visit(const ir::operation::Reduce &node)
   if (operands.at(output_index).info().isDynamic())
     return;
 
-  const auto input_index{node.getInputs().at(ir::operation::Reduce::Input::INPUT)};
-  const auto input_shape = operands.at(input_index).shape();
-  const auto output_shape = operands.at(output_index).shape();
+  const auto &input_index{node.getInputs().at(ir::operation::Reduce::Input::INPUT)};
+  const auto &input_shape = operands.at(input_index).shape();
+  const auto &output_shape = operands.at(output_index).shape();
 
   OP_REQUIRES(input_shape.rank() <= 4);
   OP_REQUIRES(output_shape.rank() <= input_shape.rank());
@@ -516,9 +552,9 @@ void ShapeValidator::visit(const ir::operation::Gather &node)
   const auto ifm_index{node.getInputs().at(ir::operation::Gather::Input::INPUT)};
   const auto indices_index{node.getInputs().at(ir::operation::Gather::Input::INDICES)};
 
-  const auto ifm_shape = operands.at(ifm_index).shape();
-  const auto indices_shape = operands.at(indices_index).shape();
-  const auto ofm_shape = operands.at(ofm_index).shape();
+  const auto &ifm_shape = operands.at(ifm_index).shape();
+  const auto &indices_shape = operands.at(indices_index).shape();
+  const auto &ofm_shape = operands.at(ofm_index).shape();
 
   OP_REQUIRES(ifm_shape.rank() <= 4);
   OP_REQUIRES(indices_shape.rank() <= 3);
@@ -566,7 +602,7 @@ void ShapeValidator::visit(const ir::operation::Pack &node)
   const auto output_rank = static_cast<int32_t>(output_shape.rank());
 
   const auto input1_index{node.getInputs().at(0)};
-  const auto input_shape = operands.at(input1_index).shape();
+  const auto &input_shape = operands.at(input1_index).shape();
 
   OP_REQUIRES(axis >= -output_rank && axis < output_rank);
   for (const auto &index : node.getInputs())

@@ -42,21 +42,27 @@ public:
   KernelGenerator(const ir::train::TrainableGraph &tgraph,
                   const std::shared_ptr<TensorRegistry> &tensor_reg,
                   const std::shared_ptr<ExternalContext> &external_context,
-                  std::shared_ptr<exec::train::optimizer::Optimizer> optimizer);
+                  const exec::train::optimizer::Optimizer *optimizer);
 
   std::unique_ptr<exec::train::TrainableFnSequence> generate(ir::OperationIndex op_ind) override;
 
+  void visit(const ir::train::operation::BinaryArithmetic &) override;
   void visit(const ir::train::operation::Conv2D &) override;
+  void visit(const ir::train::operation::DepthwiseConv2D &) override;
   void visit(const ir::train::operation::ElementwiseActivation &) override;
   void visit(const ir::train::operation::FullyConnected &) override;
   void visit(const ir::train::operation::Loss &) override;
+  void visit(const ir::train::operation::Pad &) override;
+  void visit(const ir::train::operation::Pool2D &) override;
+  void visit(const ir::train::operation::Reduce &node) override;
   void visit(const ir::train::operation::Reshape &node) override;
+  void visit(const ir::train::operation::Softmax &node) override;
 
 private:
   ir::Layout _current_layout;
   std::shared_ptr<TensorRegistry> _tensor_reg;
   const std::shared_ptr<ExternalContext> _external_context;
-  std::shared_ptr<exec::train::optimizer::Optimizer> _optimizer;
+  const exec::train::optimizer::Optimizer *_optimizer;
   std::vector<std::unique_ptr<exec::train::IGradientApplier>> _update_funcs;
 };
 

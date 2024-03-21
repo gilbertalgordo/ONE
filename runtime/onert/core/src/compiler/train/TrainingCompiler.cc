@@ -16,7 +16,7 @@
 
 #include "TrainingCompiler.h"
 
-#include "StaticDerivativeShapeInferer.h"
+#include "StaticBackwardShapeInferer.h"
 #include "TrainableOperationConverter.h"
 #include "pass/LossInsertionPass.h"
 #include "../CompilerHelpers.h"
@@ -34,7 +34,6 @@
 #include <compiler/StaticShapeInferer.h>
 #include <compiler/train/LoweredTrainableGraph.h>
 #include <ir/train/TrainableGraph.h>
-#include <exec/train/optimizer/SGD.h>
 
 #include <misc/polymorphic_downcast.h>
 #include <misc/string_helpers.h>
@@ -48,7 +47,7 @@ namespace train
 
 TrainingCompiler::TrainingCompiler(const std::shared_ptr<ir::NNPkg> &nnpkg,
                                    std::vector<std::unique_ptr<CompilerOptions>> &copts,
-                                   const TrainingInfo &training_info)
+                                   const ir::train::TrainingInfo &training_info)
   : _model{nnpkg->primary_model()}, _options{copts[0].get()}, _training_info{training_info}
 {
   if (nnpkg->model_count() > 1)
@@ -135,6 +134,17 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
   // operation
   _model.reset();
 
+  // TODO Handle dump level for each model
+  auto dump_level = static_cast<dumper::dot::DotDumper::Level>(_options->graph_dump_level);
+  onert::dumper::dot::DotDumper dot_dumper(dump_level);
+
+  for (const auto &pair : trainable_subgraphs)
+  {
+    const auto &subg_index = pair.first;
+    const auto &subg = pair.second;
+    dot_dumper.dump(*subg, nnfw::misc::str("before_loss_insertion-", subg_index.value()));
+  }
+
   // Apply pass for trainable subgraphs
   for (auto &&pair : trainable_subgraphs)
   {
@@ -145,6 +155,13 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
       .append(std::make_unique<train::pass::LossInsertionPass>(*trainable_subg, &_training_info,
                                                                subg_index))
       .run();
+  }
+
+  for (const auto &pair : trainable_subgraphs)
+  {
+    const auto &subg_index = pair.first;
+    const auto &subg = pair.second;
+    dot_dumper.dump(*subg, nnfw::misc::str("after_loss_insertion-", subg_index.value()));
   }
 
   // Change input shape according to batch_size
@@ -167,10 +184,6 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
   /***************************************************
    * Backend independent analysis & optimization phase
    ***************************************************/
-  // TODO Handle dump level for each model
-  auto dump_level = static_cast<dumper::dot::DotDumper::Level>(_options->graph_dump_level);
-  onert::dumper::dot::DotDumper dot_dumper(dump_level);
-
   // Tracing context
   auto tracing_ctx = std::make_unique<util::TracingCtx>();
 
@@ -199,7 +212,7 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
     dot_dumper.dump(*lowered_subg, nnfw::misc::str("after_lower_subg-", subg_index.value()));
   }
 
-  // Set derivatives as default tensor info
+  // Set operands' info for back propagation as default tensor info
   for (const auto &pair : lowered_subgs)
   {
     auto lowered_subg = pair.second.get();
@@ -207,8 +220,8 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
     tgraph.operands().iterate([&](const ir::OperandIndex &index, const ir::Operand &obj) {
       if (!obj.isConstant())
       {
-        auto deriv = std::make_unique<ir::Operand>(obj);
-        const auto gen_index = tgraph.addDerivative(index, std::move(deriv));
+        auto bwd_operand = std::make_unique<ir::Operand>(obj);
+        const auto gen_index = tgraph.addBackwardOperand(index, std::move(bwd_operand));
         assert(gen_index == index);
         UNUSED_RELEASE(gen_index);
       }
@@ -231,12 +244,12 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
       inferer->dump();
     }
 
-    // NOTE StaticDerivativeShapeInferer is allocated for each subgraph,
+    // NOTE StaticBackwardShapeInferer is allocated for each subgraph,
     //      so it does not support models that have controlflow operations yet.
     for (auto &&pair : lowered_subgs)
     {
       auto &lowered_subg = pair.second;
-      auto inferer = std::make_unique<StaticDerivativeShapeInferer>(lowered_subg.get());
+      auto inferer = std::make_unique<StaticBackwardShapeInferer>(lowered_subg.get());
       inferer->infer();
       inferer->dump();
     }
@@ -249,17 +262,7 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
     compiler::ShapeValidator{lowered_subg->graph()}();
   }
 
-  // TODO Validate shapes of derivative tensors
-
-  // Create optimizer
-  // TODO Set properties of optimizer
-  std::shared_ptr<exec::train::optimizer::Optimizer> optimizer;
-  const auto &optim_info = _training_info.optimizerInfo();
-  if (optim_info.optim_code == ir::train::OptimizerCode::SGD)
-    optimizer = std::make_shared<exec::train::optimizer::SGD>(optim_info.learning_rate);
-  else
-    throw std::runtime_error("Invalid optimizer type, " +
-                             ir::train::toString(optim_info.optim_code));
+  // TODO Validate shapes of the tensors for back propagation
 
   /*************************************************************
    *  Backend independent analysis & optimization phase finished
@@ -283,7 +286,7 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
     args.model_index = model_index;
     args.custom_kernel_builder = custom_kernel_builder;
     auto executor = std::unique_ptr<exec::IExecutor>{
-      ExecutorFactory::get().create(std::move(lowered_subg), executors, args, optimizer)};
+      ExecutorFactory::get().create(std::move(lowered_subg), executors, args, _training_info)};
     executor->setIndexedRanks(indexed_ranks);
     executors->emplace(model_index, subg_index, std::move(executor));
   }

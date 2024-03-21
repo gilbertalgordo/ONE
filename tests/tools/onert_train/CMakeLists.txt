@@ -6,12 +6,17 @@ if(NOT BUILD_ONERT)
   return()
 endif(NOT BUILD_ONERT)
 
+# Use C++17 for onert_train
+# TODO: Remove this when we use C++17 for all runtime directories
+set(CMAKE_CXX_STANDARD 17)
+
 list(APPEND ONERT_TRAIN_SRCS "src/onert_train.cc")
 list(APPEND ONERT_TRAIN_SRCS "src/args.cc")
 list(APPEND ONERT_TRAIN_SRCS "src/nnfw_util.cc")
 list(APPEND ONERT_TRAIN_SRCS "src/randomgen.cc")
 list(APPEND ONERT_TRAIN_SRCS "src/rawformatter.cc")
 list(APPEND ONERT_TRAIN_SRCS "src/rawdataloader.cc")
+list(APPEND ONERT_TRAIN_SRCS "src/metrics.cc")
 
 nnfw_find_package(Boost REQUIRED program_options)
 nnfw_find_package(HDF5 QUIET)

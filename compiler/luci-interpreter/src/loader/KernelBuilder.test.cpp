@@ -25,6 +25,8 @@
 #include <kernels/Cast.h>
 #include <kernels/Concatenation.h>
 #include <kernels/Conv2D.h>
+#include <kernels/Cos.h>
+#include <kernels/CumSum.h>
 #include <kernels/DepthToSpace.h>
 #include <kernels/DepthwiseConv2D.h>
 #include <kernels/Div.h>
@@ -67,6 +69,7 @@
 #include <kernels/ResizeNearestNeighbor.h>
 #include <kernels/ReverseV2.h>
 #include <kernels/Rsqrt.h>
+#include <kernels/Sin.h>
 #include <kernels/Slice.h>
 #include <kernels/Softmax.h>
 #include <kernels/SpaceToDepth.h>
@@ -78,6 +81,7 @@
 #include <kernels/StridedSlice.h>
 #include <kernels/Sub.h>
 #include <kernels/Tanh.h>
+#include <kernels/Tile.h>
 #include <kernels/Transpose.h>
 #include <kernels/TransposeConv.h>
 #include <kernels/Unpack.h>
@@ -99,7 +103,7 @@ protected:
 
   std::unique_ptr<IMemoryManager> _memory_manager;
 
-  template <typename NodeT, typename... Args> NodeT *createNode(Args &&... args)
+  template <typename NodeT, typename... Args> NodeT *createNode(Args &&...args)
   {
     auto *node = _graph.nodes()->create<NodeT>(std::forward<Args>(args)...);
     // The actual type does not matter for the purpose of the tests.
@@ -297,6 +301,42 @@ TEST_F(KernelBuilderTest, Conv2D)
   EXPECT_THAT(kernel->params().dilation_height_factor, Eq(op->dilation()->h()));
   EXPECT_THAT(kernel->params().dilation_width_factor, Eq(op->dilation()->w()));
   EXPECT_THAT(kernel->params().activation, Eq(op->fusedActivationFunction()));
+}
+
+TEST_F(KernelBuilderTest, Cos)
+{
+  auto *input = createInputNode();
+
+  auto *op = createNode<luci::CircleCos>();
+  op->x(input);
+
+  auto kernel = buildKernel<kernels::Cos>(op);
+  ASSERT_THAT(kernel, NotNull());
+
+  checkTensor(kernel->input(), input);
+  checkTensor(kernel->output(), op);
+}
+
+TEST_F(KernelBuilderTest, CumSum)
+{
+  auto *input = createInputNode();
+  auto *axis = createInputNode();
+
+  auto *op = createNode<luci::CircleCumSum>();
+  op->input(input);
+  op->axis(axis);
+
+  op->exclusive(false);
+  op->reverse(false);
+
+  auto kernel = buildKernel<kernels::CumSum>(op);
+  ASSERT_THAT(kernel, NotNull());
+
+  checkTensor(kernel->input(), input);
+  checkTensor(kernel->axis(), axis);
+  checkTensor(kernel->output(), op);
+  EXPECT_THAT(kernel->params().exclusive, Eq(op->exclusive()));
+  EXPECT_THAT(kernel->params().reverse, Eq(op->reverse()));
 }
 
 TEST_F(KernelBuilderTest, DepthToSpace)
@@ -1069,6 +1109,20 @@ TEST_F(KernelBuilderTest, Rsqrt)
   checkTensor(kernel->output(), op);
 }
 
+TEST_F(KernelBuilderTest, Sin)
+{
+  auto *input = createInputNode();
+
+  auto *op = createNode<luci::CircleSin>();
+  op->x(input);
+
+  auto kernel = buildKernel<kernels::Sin>(op);
+  ASSERT_THAT(kernel, NotNull());
+
+  checkTensor(kernel->input(), input);
+  checkTensor(kernel->output(), op);
+}
+
 TEST_F(KernelBuilderTest, Slice)
 {
   auto *input = createInputNode();
@@ -1283,6 +1337,23 @@ TEST_F(KernelBuilderTest, Tanh)
   ASSERT_THAT(kernel, NotNull());
 
   checkTensor(kernel->input(), input);
+  checkTensor(kernel->output(), op);
+}
+
+TEST_F(KernelBuilderTest, Tile)
+{
+  auto *input = createInputNode();
+  auto *multiples = createInputNode();
+
+  auto *op = createNode<luci::CircleTile>();
+  op->input(input);
+  op->multiples(multiples);
+
+  auto kernel = buildKernel<kernels::Tile>(op);
+  ASSERT_THAT(kernel, NotNull());
+
+  checkTensor(kernel->input(), input);
+  checkTensor(kernel->multiples(), multiples);
   checkTensor(kernel->output(), op);
 }
 

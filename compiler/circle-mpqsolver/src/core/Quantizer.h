@@ -38,18 +38,30 @@ struct QuantizerHook
    * @brief called on successfull quantization
    * @param module quantized module
    */
-  virtual void on_quantized(luci::Module *module) const = 0;
+  virtual void onQuantized(luci::Module *module) const = 0;
 };
 
 class Quantizer
 {
 public:
-  Quantizer(const std::string &input_dtype, const std::string &output_type);
+  struct Context
+  {
+    std::string output_model_dtype = "uint8";
+    std::string granularity = "channel";
+    std::string input_type = "uint8";
+    std::string output_type = "uint8";
+    bool TF_style_maxpool = false;
+    bool save_min_max = false;
+    // TODO Support layer info
+  };
+
+public:
+  Quantizer(const Context &ctx) : _ctx(ctx) {}
 
   /**
    * @brief set hook on the end of quantization event
    */
-  void set_hook(const QuantizerHook *callback);
+  void setHook(const QuantizerHook *callback);
 
   /**
    * @brief quantize recorded module (min/max initialized) with specified parameters
@@ -58,15 +70,22 @@ public:
   bool quantize(luci::Module *module, const std::string &quant_dtype, LayerParams &layer_params);
 
   /**
+   * @brief quantize recorded module (min/max initialized) with specified parameters
+   * returns true on success
+   */
+  bool quantize(luci::Module *module, LayerParams &layer_params);
+
+  /**
    * @brief fake_quantize recorded module (min/max initialized) with specified parameters
    * returns true on success
    */
-  bool fake_quantize(luci::Module *module, const std::string &quant_dtype,
-                     LayerParams &layer_params);
+  bool fakeQuantize(luci::Module *module, const std::string &quant_dtype,
+                    LayerParams &layer_params);
+
+  const Context &getContext() const { return _ctx; }
 
 private:
-  std::string _input_dtype = "uint8";
-  std::string _output_dtype = "uint8";
+  Context _ctx;
   const QuantizerHook *_hook = nullptr;
 };
 

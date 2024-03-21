@@ -52,12 +52,14 @@ public:
   luci::CircleNode *visit(const luci::CircleAveragePool2D *) final;
   luci::CircleNode *visit(const luci::CircleBatchMatMul *) final;
   luci::CircleNode *visit(const luci::CircleBatchToSpaceND *) final;
+  luci::CircleNode *visit(const luci::CircleBroadcastTo *) final;
   luci::CircleNode *visit(const luci::CircleCast *) final;
   luci::CircleNode *visit(const luci::CircleCeil *) final;
   luci::CircleNode *visit(const luci::CircleConcatenation *) final;
   luci::CircleNode *visit(const luci::CircleConst *) final;
   luci::CircleNode *visit(const luci::CircleConv2D *) final;
   luci::CircleNode *visit(const luci::CircleCos *) final;
+  luci::CircleNode *visit(const luci::CircleCumSum *) final;
   luci::CircleNode *visit(const luci::CircleCustom *) final;
 
   luci::CircleNode *visit(const luci::CircleNode *) final { return nullptr; }
@@ -255,6 +257,7 @@ public:
   luci::CircleNode *visit(const luci::CircleBCQFullyConnected *) final;
   luci::CircleNode *visit(const luci::CircleBCQGather *) final;
   luci::CircleNode *visit(const luci::CircleInstanceNorm *) final;
+  luci::CircleNode *visit(const luci::CircleGRU *) final;
 
   // NOTE CircleInput and CircleOutput are not handled here as these need
   //      link with graph I/O

@@ -492,6 +492,36 @@ loco::NodeShape infer_batchmatmul_shape(const loco::TensorShape &x_shape,
   return loco::NodeShape{output_shape};
 }
 
+loco::NodeShape infer_broadcast_to(const luci::CircleBroadcastTo *node)
+{
+  const loco::DataType S32 = loco::DataType::S32;
+
+  loco::TensorShape shape_by_input;
+  {
+    LUCI_ASSERT(node->shape(), "2nd input shape() should not be nullptr");
+
+    // Only support node's shape() is CircleConst with S32
+    auto const_shape_node = dynamic_cast<luci::CircleConst *>(node->shape());
+    if (const_shape_node != nullptr)
+    {
+      LUCI_ASSERT(const_shape_node->dtype() == S32, "Only support int32 CircleConst");
+
+      shape_by_input.rank(const_shape_node->size<S32>());
+      for (uint32_t axis = 0; axis < shape_by_input.rank(); ++axis)
+      {
+        shape_by_input.dim(axis) = const_shape_node->at<S32>(axis);
+      }
+    }
+    else
+    {
+      // We use shape from the node itself
+      shape_by_input = own_shape(node);
+    }
+  }
+
+  return loco::NodeShape{shape_by_input};
+}
+
 loco::NodeShape infer_concatenation(const luci::CircleConcatenation *node)
 {
   // TODO Support when CircleConcatenation has 0 input
@@ -514,6 +544,8 @@ loco::NodeShape infer_concatenation(const luci::CircleConcatenation *node)
   for (uint32_t i = 1; i < node->numValues(); ++i)
   {
     auto input_shape = luci::shape_get(node->values(i)).as<loco::TensorShape>();
+    if (input_shape.rank() != output_shape.rank())
+      INTERNAL_EXN_V("Input has incompatible shape", node->name());
 
     for (uint32_t j = 0; j < output_shape.rank(); ++j)
     {
@@ -1575,7 +1607,9 @@ loco::NodeShape infer_transpose(const luci::CircleTranspose *node)
 loco::NodeShape infer_transpose_conv(const luci::CircleTransposeConv *node)
 {
   // TransposeConv's output shape is written in its 'inputSizes' argument
-  auto input_sizes_const = loco::must_cast<luci::CircleConst *>(node->inputSizes());
+  auto input_sizes_const = dynamic_cast<luci::CircleConst *>(node->inputSizes());
+  if (not input_sizes_const)
+    return use_own(node);
   // TODO support non-const type
   LUCI_ASSERT(input_sizes_const->dtype() == loco::DataType::S32, "Only support S32 dtype")
   LUCI_ASSERT(input_sizes_const->rank() == 1 && input_sizes_const->dim(0).value() == 4,
@@ -1706,6 +1740,28 @@ loco::NodeShape infer_bcq_gather(const luci::CircleBCQGather *node)
     output_shape.dim(outdim_index++) = indices_shape.dim(i);
   for (uint32_t i = axis + 1; i < input_shape.rank(); ++i)
     output_shape.dim(outdim_index++) = input_shape.dim(i);
+
+  return loco::NodeShape{output_shape};
+}
+
+loco::NodeShape infer_circle_gru(const luci::CircleGRU *node)
+{
+  loco::TensorShape output_shape;
+
+  const auto input_shape = luci::shape_get(node->input()).as<loco::TensorShape>();
+  const auto state_shape = luci::shape_get(node->state()).as<loco::TensorShape>();
+
+  auto rank = input_shape.rank();
+  assert(rank > 1);
+  output_shape.rank(rank);
+  for (uint32_t i = 0; i < rank - 1; i++)
+  {
+    output_shape.dim(i) = input_shape.dim(i);
+  }
+  output_shape.dim(rank - 1) = state_shape.dim(1);
+
+  if (not node->returnSequences())
+    output_shape.dim(0) = 1;
 
   return loco::NodeShape{output_shape};
 }
@@ -1966,7 +2022,7 @@ loco::NodeShape infer_while_out(const luci::CircleWhileOut *node)
   auto cond_graph_inputs = cond_graph->inputs();
   auto cond_graph_input = cond_graph_inputs->at(cond_in->index());
 
-  auto cond_graph_input_shape = *cond_graph_input->shape();
+  const auto &cond_graph_input_shape = *cond_graph_input->shape();
   auto this_shape = own_shape(node);
 
   if (!(this_shape == cond_graph_input_shape))
@@ -2015,6 +2071,11 @@ public:
     return infer_batch_to_space_nd(node);
   }
 
+  loco::NodeShape visit(const luci::CircleBroadcastTo *node) final
+  {
+    return infer_broadcast_to(node);
+  }
+
   loco::NodeShape visit(const luci::CircleCast *node) final { return use_x(node); }
 
   loco::NodeShape visit(const luci::CircleCeil *node) final { return use_x(node); }
@@ -2029,6 +2090,8 @@ public:
   loco::NodeShape visit(const luci::CircleConv2D *node) final { return infer_conv2d(node); }
 
   loco::NodeShape visit(const luci::CircleCos *node) final { return use_x(node); }
+
+  loco::NodeShape visit(const luci::CircleCumSum *node) final { return use_input(node); }
 
   loco::NodeShape visit(const luci::CircleCustom *node) final { return use_own(node); }
 
@@ -2438,6 +2501,8 @@ public:
 
     return loco::NodeShape{input_shape};
   }
+
+  loco::NodeShape visit(const luci::CircleGRU *node) final { return infer_circle_gru(node); }
 
   // Virtual
   loco::NodeShape visit(const luci::CircleInput *node) final { return infer_input(node); }

@@ -16,13 +16,19 @@
 
 #include "KernelGenerator.h"
 
+#include "ops/BinaryArithmeticLayer.h"
 #include "ops/ConvolutionLayer.h"
+#include "ops/DepthwiseConvolutionLayer.h"
 #include "ops/ElementwiseActivationLayer.h"
 #include "ops/FullyConnectedLayer.h"
-#include "ops/LossLayer.h"
+#include "ops/LossMeanSquaredErrorLayer.h"
+#include "ops/LossCategoricalCrossentropyLayer.h"
+#include "ops/MeanLayer.h"
 #include "ops/GradientApplier.h"
+#include "ops/PadLayer.h"
 #include "ops/PoolLayer.h"
 #include "ops/ReshapeLayer.h"
+#include "ops/SoftMaxLayer.h"
 
 #include <backend/Backend.h>
 #include <backend/IConfig.h>
@@ -54,17 +60,6 @@ convertElementwiseActivationType(ir::operation::ElementwiseActivation::Type type
   }
 }
 
-ops::LossType convertLossType(ir::operation::Loss::Type type_ir)
-{
-  switch (type_ir)
-  {
-    case ir::operation::Loss::Type::MEAN_SQUARED_ERROR:
-      return ops::LossType::kMSE;
-    default:
-      throw std::runtime_error("train KernelGenerator : Not supported operation yet");
-  }
-}
-
 ops::PoolType convertPoolType(ir::operation::Pool2D::PoolType type_ir)
 {
   switch (type_ir)
@@ -78,7 +73,7 @@ ops::PoolType convertPoolType(ir::operation::Pool2D::PoolType type_ir)
 }
 
 std::unique_ptr<ops::GradientApplier>
-generateGradientApplier(const std::shared_ptr<exec::train::optimizer::Optimizer> optimizer,
+generateGradientApplier(const exec::train::optimizer::Optimizer *optimizer,
                         const IPortableTensor *gradient, ITrainableTensor *trainable)
 {
   auto update_fn = std::make_unique<ops::GradientApplier>();
@@ -119,29 +114,138 @@ std::unique_ptr<exec::train::TrainableFnSequence> KernelGenerator::generate(ir::
 KernelGenerator::KernelGenerator(const ir::train::TrainableGraph &tgraph,
                                  const std::shared_ptr<TensorRegistry> &tensor_reg,
                                  const std::shared_ptr<ExternalContext> &external_context,
-                                 std::shared_ptr<exec::train::optimizer::Optimizer> optimizer)
+                                 const exec::train::optimizer::Optimizer *optimizer)
   : backend::train::KernelGeneratorBase{tgraph}, _current_layout{tgraph.layout()},
-    _tensor_reg{tensor_reg},
-    _external_context(external_context), _optimizer{optimizer}, _update_funcs{}
+    _tensor_reg{tensor_reg}, _external_context(external_context), _optimizer{optimizer},
+    _update_funcs{}
 {
   // DO NOTHING
 }
 
+void KernelGenerator::visit(const ir::train::operation::BinaryArithmetic &node)
+{
+  using ir::train::operation::BinaryArithmetic;
+
+  const auto output_index{node.getOutputs().at(0)};
+  const auto lhs_index{node.getInputs().at(BinaryArithmetic::Input::LHS)};
+  const auto rhs_index{node.getInputs().at(BinaryArithmetic::Input::RHS)};
+
+  const auto arithmetic_type = node.param().arithmetic_type;
+  const auto activation = node.param().activation;
+
+  auto output_tensor = _tensor_reg->getPortableTensor(output_index);
+  auto lhs_tensor = _tensor_reg->getPortableTensor(lhs_index);
+  auto rhs_tensor = _tensor_reg->getPortableTensor(rhs_index);
+
+  auto back_prop_output_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto back_prop_lhs_tensor = _tensor_reg->getBackPropTensor(lhs_index);
+  auto back_prop_rhs_tensor = _tensor_reg->getBackPropTensor(rhs_index);
+
+  auto fn = std::make_unique<ops::BinaryArithmeticLayer>();
+  fn->configure(lhs_tensor, rhs_tensor, output_tensor, back_prop_lhs_tensor, back_prop_rhs_tensor,
+                back_prop_output_tensor, activation,
+                static_cast<train::ops::ArithmeticType>(arithmetic_type));
+  _return_fn = std::move(fn);
+}
+
 void KernelGenerator::visit(const ir::train::operation::Conv2D &node)
 {
-  // TODO Generate kernel
+  using ir::train::operation::Conv2D;
+
+  const auto out_index{node.getOutputs().at(0)};
+  const auto in_index{node.getInputs().at(Conv2D::Input::INPUT)};
+  const auto ker_index{node.getInputs().at(Conv2D::Input::KERNEL)};
+  const auto bias_index{node.getInputs().at(Conv2D::Input::BIAS)};
+
+  auto out_tensor = _tensor_reg->getPortableTensor(out_index);
+  auto in_tensor = _tensor_reg->getPortableTensor(in_index);
+  auto ker_tensor = _tensor_reg->getTrainableTensor(ker_index);
+  auto bias_tensor = _tensor_reg->getTrainableTensor(bias_index);
+
+  auto out_back_prop_tensor = _tensor_reg->getBackPropTensor(out_index);
+  auto in_back_prop_tensor = _tensor_reg->getBackPropTensor(in_index);
+  auto ker_grad_tensor = _tensor_reg->getGradientTensor(ker_index);
+  auto bias_grad_tensor = _tensor_reg->getGradientTensor(bias_index);
+
+  // Generate kernel
+  const auto stride = node.param().stride;
+  const auto activation = node.param().activation;
+  const auto &param_padding = node.param().padding;
+  const auto dilation = node.param().dilation;
+  auto fn = std::make_unique<ops::ConvolutionLayer>();
+
+  auto &operands = _tgraph.operands();
+  const auto ifm_shape = operands.at(in_index).shape().asFeature(_current_layout);
+  const auto ofm_shape = operands.at(out_index).shape().asFeature(_current_layout);
+  // Kernel format is [depth_out, kernel_height, kernel_width, depth_in].
+  const auto &ker_shape = operands.at(ker_index).shape();
+  const auto ker_height = ker_shape.dim(1);
+  const auto ker_width = ker_shape.dim(2);
+
+  const auto padding =
+    ir::calculatePadding(param_padding, ifm_shape, ofm_shape, stride, ker_width, ker_height,
+                         dilation.width_factor, dilation.height_factor);
+
+  fn->configure(in_tensor, ker_tensor, bias_tensor, out_tensor, in_back_prop_tensor,
+                ker_grad_tensor, bias_grad_tensor, out_back_prop_tensor, param_padding.type,
+                padding.left, padding.right, padding.top, padding.bottom, stride.horizontal,
+                stride.vertical, dilation.width_factor, dilation.height_factor, activation);
+
+  _return_fn = std::move(fn);
 
   // Generate GradientApplier
-  const auto ker_index{node.getInputs().at(ir::train::operation::Conv2D::Input::KERNEL)};
+  if (bias_tensor)
+    _update_funcs.emplace_back(generateGradientApplier(_optimizer, bias_grad_tensor, bias_tensor));
+  _update_funcs.emplace_back(generateGradientApplier(_optimizer, ker_grad_tensor, ker_tensor));
+}
 
-  auto grad_tensor = _tensor_reg->getGradientTensor(ker_index);
+void KernelGenerator::visit(const ir::train::operation::DepthwiseConv2D &node)
+{
+  using ir::train::operation::DepthwiseConv2D;
+
+  const auto ofm_index{node.getOutputs().at(0)};
+  const auto ifm_index{node.getInputs().at(DepthwiseConv2D::Input::INPUT)};
+  const auto ker_index{node.getInputs().at(DepthwiseConv2D::Input::KERNEL)};
+  const auto bias_index{node.getInputs().at(DepthwiseConv2D::Input::BIAS)};
+
+  auto ofm_tensor = _tensor_reg->getPortableTensor(ofm_index);
+  auto ifm_tensor = _tensor_reg->getPortableTensor(ifm_index);
   auto ker_tensor = _tensor_reg->getTrainableTensor(ker_index);
+  auto bias_tensor = _tensor_reg->getTrainableTensor(bias_index);
 
-  auto update_fn = std::make_unique<ops::GradientApplier>();
+  auto ofm_back_prop_tensor = _tensor_reg->getBackPropTensor(ofm_index);
+  auto ifm_back_prop_tensor = _tensor_reg->getBackPropTensor(ifm_index);
+  auto ker_grad_tensor = _tensor_reg->getGradientTensor(ker_index);
+  auto bias_grad_tensor = _tensor_reg->getGradientTensor(bias_index);
 
-  update_fn->configure(_optimizer, grad_tensor, ker_tensor);
+  const auto stride = node.param().stride;
+  const auto &operands = _tgraph.operands();
+  const auto ofm_shape = operands.at(ofm_index).shape().asFeature(_current_layout);
+  const auto ifm_shape = operands.at(ifm_index).shape().asFeature(_current_layout);
+  // Kernel format is [1, kernel_height, kernel_width, depth_out].
+  const auto &ker_shape = operands.at(ker_index).shape();
+  const auto ker_height = ker_shape.dim(1);
+  const auto ker_width = ker_shape.dim(2);
+  const auto dilation_width = node.param().dilation.width_factor;
+  const auto dilation_height = node.param().dilation.height_factor;
+  const auto padding = ir::calculatePadding(node.param().padding, ifm_shape, ofm_shape, stride,
+                                            ker_width, ker_height, dilation_width, dilation_height);
+  const auto multiplier = node.param().multiplier;
+  const auto activation = node.param().activation;
 
-  _update_funcs.emplace_back(generateGradientApplier(_optimizer, grad_tensor, ker_tensor));
+  auto fn = std::make_unique<ops::DepthwiseConvolutionLayer>();
+
+  fn->configure(ifm_tensor, ker_tensor, bias_tensor, ofm_tensor, ifm_back_prop_tensor,
+                ker_grad_tensor, bias_grad_tensor, ofm_back_prop_tensor, padding.left,
+                padding.right, padding.top, padding.bottom, stride.horizontal, stride.vertical,
+                multiplier, dilation_width, dilation_height, activation, _external_context);
+
+  _return_fn = std::move(fn);
+
+  // Generate GradientApplier
+  if (bias_tensor)
+    _update_funcs.emplace_back(generateGradientApplier(_optimizer, bias_grad_tensor, bias_tensor));
+  _update_funcs.emplace_back(generateGradientApplier(_optimizer, ker_grad_tensor, ker_tensor));
 }
 
 void KernelGenerator::visit(const ir::train::operation::ElementwiseActivation &node)
@@ -154,12 +258,12 @@ void KernelGenerator::visit(const ir::train::operation::ElementwiseActivation &n
   auto output_tensor = _tensor_reg->getPortableTensor(output_index);
   auto input_tensor = _tensor_reg->getPortableTensor(input_index);
 
-  auto deriv_input_tensor = _tensor_reg->getDerivativeTensor(input_index);
-  auto deriv_output_tensor = _tensor_reg->getDerivativeTensor(output_index);
+  auto back_prop_input_tensor = _tensor_reg->getBackPropTensor(input_index);
+  auto back_prop_output_tensor = _tensor_reg->getBackPropTensor(output_index);
 
   auto fn = std::make_unique<ops::ElementwiseActivationLayer>();
 
-  fn->configure(input_tensor, output_tensor, deriv_input_tensor, deriv_output_tensor,
+  fn->configure(input_tensor, output_tensor, back_prop_input_tensor, back_prop_output_tensor,
                 node.param().alpha, node.param().beta,
                 convertElementwiseActivationType(node.param().op_type));
 
@@ -180,8 +284,8 @@ void KernelGenerator::visit(const ir::train::operation::FullyConnected &node)
   auto weights_tensor = _tensor_reg->getTrainableTensor(weights_index);
   auto bias_tensor = _tensor_reg->getTrainableTensor(bias_index);
 
-  auto out_deriv_tensor = _tensor_reg->getDerivativeTensor(out_index);
-  auto in_deriv_tensor = _tensor_reg->getDerivativeTensor(in_index);
+  auto out_back_prop_tensor = _tensor_reg->getBackPropTensor(out_index);
+  auto in_back_prop_tensor = _tensor_reg->getBackPropTensor(in_index);
   auto weights_grad_tensor = _tensor_reg->getGradientTensor(weights_index);
   auto bias_grad_tensor = _tensor_reg->getGradientTensor(bias_index);
 
@@ -191,9 +295,9 @@ void KernelGenerator::visit(const ir::train::operation::FullyConnected &node)
 
   auto fn = std::make_unique<ops::FullyConnectedLayer>();
 
-  fn->configure(in_tensor, weights_tensor, bias_tensor, out_tensor, in_deriv_tensor,
-                weights_grad_tensor, bias_grad_tensor, out_deriv_tensor, activation, weights_format,
-                _external_context);
+  fn->configure(in_tensor, weights_tensor, bias_tensor, out_tensor, in_back_prop_tensor,
+                weights_grad_tensor, bias_grad_tensor, out_back_prop_tensor, activation,
+                weights_format, _external_context);
 
   _return_fn = std::move(fn);
 
@@ -216,15 +320,130 @@ void KernelGenerator::visit(const ir::train::operation::Loss &node)
   auto y_pred_tensor = _tensor_reg->getPortableTensor(y_pred_index);
   auto y_true_tensor = _tensor_reg->getPortableTensor(y_true_index);
 
-  auto deriv_y_pred_tensor = _tensor_reg->getDerivativeTensor(y_pred_index);
-  auto fn = std::make_unique<ops::LossLayer>();
+  auto back_prop_y_pred_tensor = _tensor_reg->getBackPropTensor(y_pred_index);
 
-  fn->configure(y_pred_tensor, y_true_tensor, output_tensor, deriv_y_pred_tensor,
-                convertLossType(node.param().op_type));
+  auto loss_code = node.param().loss_code;
+  auto loss_param = node.param().loss_param;
+
+  switch (loss_code)
+  {
+    case ir::train::LossCode::MeanSquaredError:
+    {
+      auto fn = std::make_unique<ops::LossMeanSquaredErrorLayer>();
+      fn->configure(y_pred_tensor, y_true_tensor, output_tensor, back_prop_y_pred_tensor);
+      _return_fn = std::move(fn);
+      break;
+    }
+    case ir::train::LossCode::CategoricalCrossentropy:
+    {
+      auto fn = std::make_unique<ops::LossCategoricalCrossentropyLayer>();
+      fn->configure(y_pred_tensor, y_true_tensor, output_tensor, back_prop_y_pred_tensor,
+                    loss_param.cce.axis, loss_param.cce.label_smoothing);
+      _return_fn = std::move(fn);
+      break;
+    }
+    default:
+      throw std::runtime_error("LossLayer: unsupported loss type");
+      break;
+  }
+}
+
+void KernelGenerator::visit(const ir::train::operation::Pad &node)
+{
+  const auto input_index{node.getInputs().at(ir::operation::Pad::Input::INPUT)};
+  const auto pad_index{node.getInputs().at(ir::operation::Pad::Input::PAD)};
+  const auto output_index{node.getOutputs().at(0)};
+
+  auto input = _tensor_reg->getPortableTensor(input_index);
+  auto pad = _tensor_reg->getPortableTensor(pad_index);
+  auto output = _tensor_reg->getPortableTensor(output_index);
+
+  auto fn = std::make_unique<ops::PadLayer>();
+
+  IPortableTensor *value = nullptr;
+  if (node.getInputs().size() == 3) // isPadV2
+  {
+    const auto value_index{node.getInputs().at(ir::operation::Pad::Input::VALUE)};
+    value = _tensor_reg->getPortableTensor(value_index);
+  }
+
+  auto out_back_prop_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto in_back_prop_tensor = _tensor_reg->getBackPropTensor(input_index);
+
+  fn->configure(input, pad, value, output, in_back_prop_tensor, out_back_prop_tensor);
+  _return_fn = std::move(fn);
+}
+
+void KernelGenerator::visit(const ir::train::operation::Pool2D &node)
+{
+  using ir::train::operation::Pool2D;
+
+  const auto output_index{node.getOutputs().at(0)};
+  const auto input_index{node.getInputs().at(0)};
+
+  const auto &operands = _tgraph.operands();
+  const auto &ofm_shape = operands.at(output_index).shape();
+  const auto &ifm_shape = operands.at(input_index).shape();
+
+  if (ifm_shape.rank() != 4)
+  {
+    std::runtime_error(node.name() + " only supports 4D tensor as input");
+  }
+
+  // calcualate padding
+  const auto stride = node.param().stride;
+  const auto kh = node.param().kh;
+  const auto kw = node.param().kw;
+  const auto padding =
+    ir::calculatePadding(node.param().padding, ifm_shape.asFeature(_current_layout),
+                         ofm_shape.asFeature(_current_layout), stride, kw, kh);
+
+  auto out_tensor = _tensor_reg->getPortableTensor(output_index);
+  auto in_tensor = _tensor_reg->getPortableTensor(input_index);
+
+  auto out_back_prop_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto in_back_prop_tensor = _tensor_reg->getBackPropTensor(input_index);
+
+  const auto activation = node.param().activation;
+  const auto pool_type = convertPoolType(node.param().op_type);
+
+  auto fn = std::make_unique<ops::PoolLayer>();
+
+  fn->configure(in_tensor, padding.left, padding.right, padding.top, padding.bottom,
+                stride.horizontal, stride.vertical, kw, kh, activation, out_tensor, pool_type,
+                in_back_prop_tensor, out_back_prop_tensor);
 
   _return_fn = std::move(fn);
+}
 
-  UNUSED_RELEASE(convertPoolType);
+void KernelGenerator::visit(const ir::train::operation::Reduce &node)
+{
+  using ir::train::operation::Reduce;
+
+  const auto output_index{node.getOutputs().at(0)};
+  const auto input_index{node.getInputs().at(Reduce::Input::INPUT)};
+  const auto axes_index{node.getInputs().at(Reduce::Input::AXES)};
+
+  const auto keep_dims = node.param().keep_dims;
+
+  auto output_tensor = _tensor_reg->getPortableTensor(output_index);
+  auto input_tensor = _tensor_reg->getPortableTensor(input_index);
+  auto axes_tensor = _tensor_reg->getPortableTensor(axes_index);
+
+  auto back_prop_output_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto back_prop_input_tensor = _tensor_reg->getBackPropTensor(input_index);
+
+  if (node.param().reduce_type == ir::operation::Reduce::ReduceType::MEAN)
+  {
+    auto fn = std::make_unique<ops::MeanLayer>();
+    fn->configure(input_tensor, axes_tensor, output_tensor, keep_dims, back_prop_input_tensor,
+                  back_prop_output_tensor);
+    _return_fn = std::move(fn);
+  }
+  else
+  {
+    throw std::runtime_error("ReduceLayer: unsupported reduce type");
+  }
 }
 
 void KernelGenerator::visit(const ir::train::operation::Reshape &node)
@@ -237,8 +456,8 @@ void KernelGenerator::visit(const ir::train::operation::Reshape &node)
   auto output_tensor = _tensor_reg->getPortableTensor(output_index);
   auto input_tensor = _tensor_reg->getPortableTensor(input_index);
 
-  auto output_deriv_tensor = _tensor_reg->getDerivativeTensor(output_index);
-  auto input_deriv_tensor = _tensor_reg->getDerivativeTensor(input_index);
+  auto output_back_prop_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto input_back_prop_tensor = _tensor_reg->getBackPropTensor(input_index);
 
   // optional 2nd input
   IPortableTensor *shape_tensor = nullptr;
@@ -251,7 +470,29 @@ void KernelGenerator::visit(const ir::train::operation::Reshape &node)
 
   auto fn = std::make_unique<ops::ReshapeLayer>();
 
-  fn->configure(input_tensor, shape_tensor, output_tensor, input_deriv_tensor, output_deriv_tensor);
+  fn->configure(input_tensor, shape_tensor, output_tensor, input_back_prop_tensor,
+                output_back_prop_tensor);
+  _return_fn = std::move(fn);
+}
+
+void KernelGenerator::visit(const ir::train::operation::Softmax &node)
+{
+  using ir::train::operation::Softmax;
+
+  const auto output_index{node.getOutputs().at(0)};
+  const auto input_index{node.getInputs().at(ir::operation::Softmax::Input::INPUT)};
+
+  const auto beta = node.param().beta;
+
+  auto output_tensor = _tensor_reg->getPortableTensor(output_index);
+  auto input_tensor = _tensor_reg->getPortableTensor(input_index);
+
+  auto output_back_prop_tensor = _tensor_reg->getBackPropTensor(output_index);
+  auto input_back_prop_tensor = _tensor_reg->getBackPropTensor(input_index);
+
+  auto fn = std::make_unique<ops::SoftMaxLayer>();
+
+  fn->configure(input_tensor, beta, output_tensor, input_back_prop_tensor, output_back_prop_tensor);
   _return_fn = std::move(fn);
 }
 

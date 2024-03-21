@@ -1,7 +1,6 @@
 require("arser")
-require("nnkit")
 require("cwrap")
-require("mio-circle06")
+require("mio-circle08")
 require("safemain")
 require("hermes")
 require("hermes-std")

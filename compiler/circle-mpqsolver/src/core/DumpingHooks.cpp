@@ -15,48 +15,61 @@
  */
 
 #include "DumpingHooks.h"
+#include <cmath>
 
 using namespace mpqsolver::core;
 
-DumpingHooks::DumpingHooks(const std::string &save_path)
-  : _save_path(save_path), _dumper(_save_path)
+DumpingHooks::DumpingHooks(const std::string &save_path, const Quantizer::Context &ctx)
+  : _save_path(save_path), _dumper(_save_path), _ctx(ctx)
 {
 }
 
-void DumpingHooks::on_begin_solver(const std::string &model_path, float q8error, float q16error)
+void DumpingHooks::onBeginSolver(const std::string &model_path, float q8error, float q16error)
 {
   _model_path = model_path;
-  _dumper.set_model_path(_model_path);
-  _dumper.prepare_for_error_dumping();
-  _dumper.dump_Q8_error(q8error);
-  _dumper.dump_Q16_error(q16error);
+  _dumper.setModelPath(_model_path);
+  if (!std::isnan(q8error) || !std::isnan(q16error))
+  {
+    _dumper.prepareForErrorDumping();
+  }
+  if (!std::isnan(q8error))
+  {
+    _dumper.dumpQ8Error(q8error);
+  }
+  if (!std::isnan(q16error))
+  {
+    _dumper.dumpQ16Error(q16error);
+  }
 }
 
-void DumpingHooks::on_begin_iteration()
+void DumpingHooks::onBeginIteration()
 {
   _in_iterations = true;
   _num_of_iterations += 1;
 }
 
-void DumpingHooks::on_end_iteration(const LayerParams &layers, const std::string &def_type,
-                                    float error) const
+void DumpingHooks::onEndIteration(const LayerParams &layers, const std::string &def_type,
+                                  float error)
 {
-  _dumper.dump_MPQ_configuration(layers, def_type, _num_of_iterations);
-  _dumper.dump_MPQ_error(error, _num_of_iterations);
-}
-
-void DumpingHooks::on_end_solver(const LayerParams &layers, const std::string &def_dtype,
-                                 float qerror)
-{
-  _dumper.dump_final_MPQ(layers, def_dtype);
-  _dumper.dump_MPQ_error(qerror);
+  _dumper.dumpMPQConfiguration(layers, def_type, _ctx.granularity, _num_of_iterations);
+  _dumper.dumpMPQError(error, _num_of_iterations);
   _in_iterations = false;
 }
 
-void DumpingHooks::on_quantized(luci::Module *module) const
+void DumpingHooks::onEndSolver(const LayerParams &layers, const std::string &def_dtype,
+                               float qerror)
+{
+  _dumper.dumpFinalMPQ(layers, def_dtype, _ctx.granularity);
+  if (!std::isnan(qerror))
+  {
+    _dumper.dumpMPQError(qerror);
+  }
+}
+
+void DumpingHooks::onQuantized(luci::Module *module) const
 {
   if (_in_iterations)
   {
-    _dumper.dump_quantized(module, _num_of_iterations);
+    _dumper.dumpQuantized(module, _num_of_iterations);
   }
 }

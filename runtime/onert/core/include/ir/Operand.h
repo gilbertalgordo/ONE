@@ -79,7 +79,7 @@ public:
   bool isConstant(void) const { return _info.isConstant(); }
 
 public:
-  template <typename T, typename... Args> void data(Args &&... args)
+  template <typename T, typename... Args> void data(Args &&...args)
   {
     data(std::make_unique<T>(std::forward<Args>(args)...));
   }
@@ -103,6 +103,9 @@ public:
     const std::size_t size = _data->size() / sizeof(T);
     return std::vector<T>(base, base + size);
   }
+
+  void setOriginIndex(OriginIndex origin) { _info.setOriginIndex(origin); }
+  OriginIndex originIndex() const { return _info.originIndex(); }
 
 private:
   OperandInfo _info;

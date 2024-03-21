@@ -27,11 +27,13 @@
 #include "Op/include/BatchMatMul.h"
 #include "Op/include/BatchToSpaceND.h"
 #include "Op/include/BidirectionalSequenceLSTM.h"
+#include "Op/include/BroadcastTo.h"
 #include "Op/include/Cast.h"
 #include "Op/include/Ceil.h"
 #include "Op/include/Concatenation.h"
 #include "Op/include/Conv2D.h"
 #include "Op/include/Cos.h"
+#include "Op/include/CumSum.h"
 #include "Op/include/DepthToSpace.h"
 #include "Op/include/DepthwiseConv2D.h"
 #include "Op/include/Dequantize.h"
@@ -129,6 +131,7 @@
 #include "Op/include/Unique.h"
 #include "Op/include/Unpack.h"
 #include "Op/include/Where.h"
+#include "Op/include/While.h"
 #include "Op/include/ZerosLike.h"
 
 #endif // __TFLITE_OP_CHEFS_H__

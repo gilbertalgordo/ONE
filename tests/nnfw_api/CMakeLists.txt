@@ -10,9 +10,10 @@ endif(NOT BUILD_ONERT)
 nnfw_find_package(GTest)
 
 set(RUNTIME_NNFW_API_TEST nnfw_api_gtest)
-file(GLOB_RECURSE RUNTIME_NNFW_API_TEST_SRC "src/*.cc" "src/*.cpp")
+file(GLOB_RECURSE RUNTIME_NNFW_API_TEST_LIB "lib/*.cc" "lib/*.cpp")
+file(GLOB_RECURSE RUNTIME_NNFW_API_TEST_SRC "main.cc" "src/*.test.cc" "src/*.test.cpp")
 
-add_executable(${RUNTIME_NNFW_API_TEST} ${RUNTIME_NNFW_API_TEST_SRC})
+add_executable(${RUNTIME_NNFW_API_TEST} ${RUNTIME_NNFW_API_TEST_LIB} ${RUNTIME_NNFW_API_TEST_SRC})
 
 nnfw_find_package(ARMCompute QUIET)
 if(ARMCompute_FOUND)
@@ -29,8 +30,7 @@ if(Opencl_Headers_FOUND)
   target_compile_definitions(${RUNTIME_NNFW_API_TEST} PRIVATE TEST_GPU_CL_BACKEND)
 endif(Opencl_Headers_FOUND)
 
-set(RUNTIME_NNFW_API_TEST_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/include
-                                  ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set(RUNTIME_NNFW_API_TEST_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/lib ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(${RUNTIME_NNFW_API_TEST} PRIVATE ${RUNTIME_NNFW_API_TEST_INCLUDE})
 
 target_link_libraries(${RUNTIME_NNFW_API_TEST} nnfw-dev jsoncpp)
@@ -65,4 +65,3 @@ install(DIRECTORY ${NNPACKAGE_MODEL_DIR} DESTINATION ${NNPACKAGE_INSTALL_TARGET}
 # Install nnpackage test model (mobilenet)
 set(NNPACKAGE_MODEL_DIR ${NNAS_PROJECT_SOURCE_DIR}/runtime/contrib/TFLiteSharp/TFLiteTestApp/res/)
 install(DIRECTORY ${NNPACKAGE_MODEL_DIR} DESTINATION ${NNPACKAGE_INSTALL_TARGET}/mobilenet_v1_1.0_224)
-
