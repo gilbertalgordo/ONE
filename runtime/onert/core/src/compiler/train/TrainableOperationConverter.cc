@@ -27,16 +27,26 @@ namespace train
 {
 
 TrainableOperationConverter::TrainableOperationConverter(
-  ir::train::TrainableGraph &tgraph, const compiler::train::TrainingInfo *training_info)
+  ir::train::TrainableGraph &tgraph, const ir::train::TrainingInfo *training_info)
   : UntrainableOperationConverter{tgraph}, _training_info{training_info}
 {
   // Avoid unused-private-field error
   UNUSED_RELEASE(_training_info);
 }
 
+void TrainableOperationConverter::visit(const ir::operation::BinaryArithmetic &node)
+{
+  _return_op = std::make_unique<ir::train::operation::BinaryArithmetic>(node);
+}
+
 void TrainableOperationConverter::visit(const ir::operation::Conv2D &node)
 {
   _return_op = std::make_unique<ir::train::operation::Conv2D>(node);
+}
+
+void TrainableOperationConverter::visit(const ir::operation::DepthwiseConv2D &node)
+{
+  _return_op = std::make_unique<ir::train::operation::DepthwiseConv2D>(node);
 }
 
 void TrainableOperationConverter::visit(const ir::operation::ElementwiseActivation &node)
@@ -58,7 +68,12 @@ void TrainableOperationConverter::visit(const ir::operation::FullyConnected &nod
 
 void TrainableOperationConverter::visit(const ir::operation::Loss &node)
 {
-  _return_op = std::make_unique<ir::train::operation::Loss>(node);
+  _return_op = std::make_unique<ir::train::operation::Loss>(node, _training_info->lossInfo());
+}
+
+void TrainableOperationConverter::visit(const ir::operation::Pad &node)
+{
+  _return_op = std::make_unique<ir::train::operation::Pad>(node);
 }
 
 void TrainableOperationConverter::visit(const ir::operation::Permute &node)
@@ -69,6 +84,11 @@ void TrainableOperationConverter::visit(const ir::operation::Permute &node)
 void TrainableOperationConverter::visit(const ir::operation::Pool2D &node)
 {
   _return_op = std::make_unique<ir::train::operation::Pool2D>(node);
+}
+
+void TrainableOperationConverter::visit(const ir::operation::Reduce &node)
+{
+  _return_op = std::make_unique<ir::train::operation::Reduce>(node);
 }
 
 void TrainableOperationConverter::visit(const ir::operation::Reshape &node)

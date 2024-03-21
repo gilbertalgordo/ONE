@@ -253,28 +253,42 @@ StaticShapeInferer::createStaticShapeInferers(
         {
           // TODO Remove dynamic_cast
           // An virtual base class cannot be downcasted by static_cast
-          const auto &if_op = dynamic_cast<const ir::operation::If &>(op);
+          try
+          {
+            const auto &if_op = dynamic_cast<const ir::operation::If &>(op);
 
-          appendChildInferer(if_op.param().then_subg_index);
-          appendChildInferer(if_op.param().else_subg_index);
+            appendChildInferer(if_op.param().then_subg_index);
+            appendChildInferer(if_op.param().else_subg_index);
 
-          appendSubgraphInputObserver(if_op.param().then_subg_index);
-          appendSubgraphInputObserver(if_op.param().else_subg_index);
+            appendSubgraphInputObserver(if_op.param().then_subg_index);
+            appendSubgraphInputObserver(if_op.param().else_subg_index);
 
-          setControlFlowOutputObserver(if_op.param().then_subg_index);
+            setControlFlowOutputObserver(if_op.param().then_subg_index);
+          }
+          catch (const std::bad_cast &)
+          {
+            throw std::runtime_error("StaticShapeInferer: Invalid If operation");
+          }
         }
         else if (op.opcode() == ir::OpCode::While)
         {
           // TODO Remove dynamic_cast
-          const auto &while_op = dynamic_cast<const ir::operation::While &>(op);
+          try
+          {
+            const auto &while_op = dynamic_cast<const ir::operation::While &>(op);
 
-          appendChildInferer(while_op.param().cond_subg_index);
-          appendChildInferer(while_op.param().body_subg_index);
+            appendChildInferer(while_op.param().cond_subg_index);
+            appendChildInferer(while_op.param().body_subg_index);
 
-          appendSubgraphInputObserver(while_op.param().cond_subg_index);
-          appendSubgraphInputObserver(while_op.param().body_subg_index);
+            appendSubgraphInputObserver(while_op.param().cond_subg_index);
+            appendSubgraphInputObserver(while_op.param().body_subg_index);
 
-          setControlFlowOutputObserver(while_op.param().body_subg_index);
+            setControlFlowOutputObserver(while_op.param().body_subg_index);
+          }
+          catch (const std::bad_cast &)
+          {
+            throw std::runtime_error("StaticShapeInferer: Invalid While operation");
+          }
         }
       });
   }
@@ -453,6 +467,23 @@ void StaticShapeInferer::visit(const ir::operation::Conv2D &op)
   output.info().shape(new_shape);
 }
 
+void StaticShapeInferer::visit(const ir::operation::DepthwiseConv2D &op)
+{
+  auto &operands = _lowered_subg->graph().operands();
+
+  const auto input_idx{op.getInputs().at(ir::operation::DepthwiseConv2D::Input::INPUT)};
+  const auto &input = operands.at(input_idx);
+  const auto ker_idx{op.getInputs().at(ir::operation::DepthwiseConv2D::Input::KERNEL)};
+  const auto &ker = operands.at(ker_idx);
+  const auto output_idx = op.getOutputs().at(0);
+  ir::Operand &output = operands.at(output_idx);
+
+  // re-sizing output shape
+  ir::Shape new_shape = shape_inference::inferDepthwiseConv2DShape(input.info().shape(),
+                                                                   ker.info().shape(), op.param());
+  output.info().shape(new_shape);
+}
+
 void StaticShapeInferer::visit(const ir::operation::ElementwiseActivation &op)
 {
   handleSimpleUnaryOp(op, op.getInputs().at(ir::operation::ElementwiseActivation::Input::INPUT));
@@ -524,11 +555,11 @@ void StaticShapeInferer::visit(const ir::operation::Fill &op)
   assert(dims_buf);
 
   const auto &dims_shape = shape.info().shape();
-  auto new_shape = ((dims_type == ir::DataType::INT32)
-                      ? shape_inference::inferFillShape<int32_t>(
-                          dims_shape, reinterpret_cast<const int32_t *>(dims_buf))
-                      : shape_inference::inferFillShape<int64_t>(
-                          dims_shape, reinterpret_cast<const int64_t *>(dims_buf)));
+  const auto &new_shape = ((dims_type == ir::DataType::INT32)
+                             ? shape_inference::inferFillShape<int32_t>(
+                                 dims_shape, reinterpret_cast<const int32_t *>(dims_buf))
+                             : shape_inference::inferFillShape<int64_t>(
+                                 dims_shape, reinterpret_cast<const int64_t *>(dims_buf)));
 
   output.info().shape(new_shape);
 }
@@ -605,11 +636,22 @@ void StaticShapeInferer::visit(const ir::operation::L2Normalization &op)
   handleSimpleUnaryOp(op, op.getInputs().at(ir::operation::L2Normalization::Input::INPUT));
 }
 
-void StaticShapeInferer::visit(const ir::operation::Loss &)
+void StaticShapeInferer::visit(const ir::operation::Loss &op)
 {
   // TODO Consider SparseCategoricalCrossentropy case
 
-  // TODO Consider output shape in case of reduction option
+  auto &operands = _lowered_subg->graph().operands();
+
+  const auto input_index{op.getInputs().at(ir::operation::Loss::Input::Y_PRED)};
+  auto &input = operands.at(input_index);
+
+  const auto output_index{op.getOutputs().at(0)};
+  auto &output = operands.at(output_index);
+
+  ir::Shape new_shape = output.info().shape();
+  new_shape.dim(0) = input.info().shape().dim(0);
+
+  output.info().shape(new_shape);
 }
 
 void StaticShapeInferer::visit(const ir::operation::LSTM &op)
@@ -783,7 +825,7 @@ void StaticShapeInferer::visit(const ir::operation::Pad &op)
   }
 
   // re-sizing output shape
-  const auto new_shape = shape_inference::inferPadShape(
+  const auto &new_shape = shape_inference::inferPadShape(
     input.shape(), reinterpret_cast<const int32_t *>(pad.data()->base()),
     pad.shape().num_elements());
   output.info().shape(new_shape);
@@ -803,7 +845,27 @@ void StaticShapeInferer::visit(const ir::operation::Permute &op)
   // However, it is not applied here, so input/output have the same layout of frontend. Because
   // "ExecutorFactory" would convert shape of input/output accoding to the layouts when registering
   // operand info to "TensorBuilder" after calling "StaticShapeInferer"
-  const auto new_shape = input.info().shape();
+  const auto &new_shape = input.info().shape();
+  output.info().shape(new_shape);
+}
+
+void StaticShapeInferer::visit(const ir::operation::Pool2D &op)
+{
+  auto &operands = _lowered_subg->graph().operands();
+
+  const auto layout = _lowered_subg->graph().layout();
+
+  const auto input_idx{op.getInputs().at(ir::operation::Pool2D::Input::INPUT)};
+  const auto &input = operands.at(input_idx);
+  if (input.info().shape().rank() != 4)
+  {
+    throw std::runtime_error(op.name() + ": supports only 4D tensor as input");
+  }
+
+  const auto output_idx = op.getOutputs().at(0);
+  ir::Operand &output = operands.at(output_idx);
+
+  ir::Shape new_shape = shape_inference::inferPoolShape(input.info().shape(), op.param(), layout);
   output.info().shape(new_shape);
 }
 
@@ -1088,8 +1150,8 @@ void StaticShapeInferer::visit(const ir::operation::SpaceToBatchND &op)
 
   const auto output_index = op.getOutputs().at(0);
   const auto input_idx{op.getInputs().at(ir::operation::SpaceToBatchND::Input::INPUT)};
-  const auto block_shape_idx{op.getInputs().at(ir::operation::SpaceToBatchND::Input::BLOCK_SIZE)};
-  const auto padding_idx{op.getInputs().at(ir::operation::SpaceToBatchND::Input::PADDINGS)};
+  const auto &block_shape_idx{op.getInputs().at(ir::operation::SpaceToBatchND::Input::BLOCK_SIZE)};
+  const auto &padding_idx{op.getInputs().at(ir::operation::SpaceToBatchND::Input::PADDINGS)};
 
   ir::Operand &output = operands.at(output_index);
   const auto &input = operands.at(input_idx);
@@ -1103,9 +1165,9 @@ void StaticShapeInferer::visit(const ir::operation::SpaceToBatchND &op)
     return;
   }
 
-  auto input_shape = input.info().shape();
-  auto block_shape_shape = block_shape.info().shape();
-  auto padding_shape = padding.info().shape();
+  const auto &input_shape = input.info().shape();
+  const auto &block_shape_shape = block_shape.info().shape();
+  const auto &padding_shape = padding.info().shape();
 
   auto block_shape_data = reinterpret_cast<const int32_t *>(block_shape.data()->base());
   auto padding_data = reinterpret_cast<const int32_t *>(padding.data()->base());
@@ -1325,7 +1387,7 @@ void StaticShapeInferer::visit(const ir::operation::While &op)
   auto body_input_observer = _subg_input_observers.at(op.param().body_subg_index).get();
   auto cond_input_observer = _subg_input_observers.at(op.param().cond_subg_index).get();
   // re-sizing input shapes of body subgraph
-  const auto inputs = op.getInputs();
+  const auto &inputs = op.getInputs();
   std::vector<ir::OperandInfo> inputs_info;
   const auto &graph = _lowered_subg->graph();
   for (size_t i = 0; i < inputs.size(); ++i)
@@ -1401,9 +1463,7 @@ void StaticShapeInferer::visit(const ir::operation::Bulk &op)
   const auto output_idx = op.getOutputs().at(0);
   ir::Operand &output = operands.at(output_idx);
 
-  auto cur_input_shape = input.info().shape();
-  auto origin_input_shape = op.param().origin_input_shapes[0];
-  auto cur_output_shape = output.info().shape();
+  const auto &cur_input_shape = input.info().shape();
   auto origin_output_shape = op.param().origin_output_shapes[0];
 
   // TODO: more check for valid batch request

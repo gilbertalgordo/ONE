@@ -57,8 +57,12 @@ if [[ ! -s "img_files" ]]; then
     # https://github.com/Samsung/ONE/issues/3213#issuecomment-722757499
 fi
 
-if [ ! -d "raw_files" ] || [ ! -s "datalist.txt" ]; then
+if [ ! -d "raw_files" ] || [ ! -s "datalist.txt" ] || [ ! -d "numpy_files" ] || [ ! -s "datalist_numpy.txt" ]; then
     ../bin/venv/bin/python preprocess_images.py
+fi
+
+if [ ! -d "numpy_files" ] || [ ! -s "datalist_numpy.txt" ]; then
+    ../bin/venv/bin/python preprocess_images_numpy.py
 fi
 
 if [[ ! -s "inception_v3_test_data.h5" ]]; then
@@ -131,6 +135,17 @@ if [[ ! -s "onnx_conv2d_conv2d_split.onnx" ]]; then
     # https://github.com/Samsung/ONE/issues/11280#issuecomment-1732852295
 fi
 
+if [[ ! -s "Add_000.inputs.txt" ]]; then
+    rm -rf Add_000.inputs.txt
+    echo "Add_000.circle.input0 Add_000.circle.input1" >> Add_000.inputs.txt
+fi
+
+# List file with wrong number of inputs (for negative test)
+if [[ ! -s "Add_000.wrong_inputs.txt" ]]; then
+    rm -rf Add_000.wrong_inputs.txt
+    echo "Add_000.circle.input0 Add_000.circle.input1 Add_000.circle.input2" >> Add_000.wrong_inputs.txt
+fi
+
 function files_missing() {
     condition="test "
 
@@ -162,6 +177,15 @@ if files_missing "${NEG_TEST_RECCURENT_MODELS[@]}"; then
     wget -nv https://github.com/Samsung/ONE/files/8137183/neg_test_onnx_recurrent_models.zip
     unzip neg_test_onnx_recurrent_models.zip
     # https://github.com/Samsung/ONE/issues/8395#issuecomment-1050364375
+fi
+
+declare -a ADD_000_MODEL_AND_INPUTS=("Add_000.circle" "Add_000.circle.input0" "Add_000.circle.input1")
+
+if files_missing "${ADD_000_MODEL_AND_INPUTS}"; then
+    rm -rf Add_000.zip
+    wget -nv https://github.com/Samsung/ONE/files/13211993/Add_000.zip
+    unzip Add_000.zip
+    # https://github.com/Samsung/ONE/issues/11724#issuecomment-1786420834
 fi
 
 # prepare 'inception_v3.circle' file used for quantization test

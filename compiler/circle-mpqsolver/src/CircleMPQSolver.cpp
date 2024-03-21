@@ -20,7 +20,11 @@
 #include <luci/CircleFileExpContract.h>
 
 #include "bisection/BisectionSolver.h"
-#include <core/SolverOutput.h>
+#include "core/DataProvider.h"
+#include "core/SolverOutput.h"
+#include "pattern/PatternSolver.h"
+#include "core/SolverOutput.h"
+#include "core/Quantizer.h"
 
 #include <iostream>
 #include <iomanip>
@@ -47,6 +51,9 @@ int handleAutoAlgorithm(arser::Arser &arser, mpqsolver::bisection::BisectionSolv
 int entry(int argc, char **argv)
 {
   const std::string bisection_str = "--bisection";
+  const std::string patterns_str = "--patterns";
+  const std::string layernorm_str = "--u8_layernorm_with_s16_variance";
+  const std::string softmax_str = "--u8_softmax_with_s16_sub_exp";
   const std::string save_intermediate_str = "--save_intermediate";
 
   arser::Arser arser("circle-mpqsolver provides light-weight methods for finding a high-quality "
@@ -55,7 +62,8 @@ int entry(int argc, char **argv)
   arser::Helper::add_version(arser, print_version);
   arser::Helper::add_verbose(arser);
 
-  arser.add_argument("--data").required(true).help("Path to the test data");
+  // if patterns are set we don't need data
+  arser.add_argument("--data").required(false).default_value("").help("Path to the test data");
   arser.add_argument("--data_format").required(false).help("Test data format (default: h5)");
 
   arser.add_argument("--qerror_ratio")
@@ -65,9 +73,25 @@ int entry(int argc, char **argv)
 
   arser.add_argument(bisection_str)
     .nargs(1)
+    .required(false)
     .type(arser::DataType::STR)
     .help("Single optional argument for bisection method. "
           "Whether input node should be quantized to Q16: 'auto', 'true', 'false'.");
+
+  arser.add_argument(patterns_str)
+    .nargs(0)
+    .required(false)
+    .help("Argument to define patterns applied (LayerNorm is the only supported) ");
+
+  arser.add_argument(layernorm_str)
+    .nargs(0)
+    .required(false)
+    .help("Use int16 for computing variance in uint8 layer normalization");
+
+  arser.add_argument(softmax_str)
+    .nargs(0)
+    .required(false)
+    .help("Use int16 for computing sub and exp in uint8 softmax");
 
   arser.add_argument("--input_model")
     .required(true)
@@ -82,6 +106,30 @@ int entry(int argc, char **argv)
     .type(arser::DataType::STR)
     .default_value("uint8")
     .help("Data type of quantized model's outputs (default: uint8)");
+
+  arser.add_argument("--quantized_dtype")
+    .type(arser::DataType::STR)
+    .default_value("uint8")
+    .help("Data type of quantized model (supported: uint8 (default), int16)");
+
+  arser.add_argument("--granularity")
+    .type(arser::DataType::STR)
+    .default_value("channel")
+    .help("Granularity of quantization scheme on weight (supported: layer, channel (default)). "
+          "Activation is quantized per layer.");
+
+  arser.add_argument("--TF-style_maxpool")
+    .nargs(0)
+    .default_value(false)
+    .help("Force MaxPool Op to have the same input/output quantparams. NOTE: This feature can "
+          "degrade accuracy of some models");
+
+  arser.add_argument("--save_min_max")
+    .nargs(0)
+    .default_value(false)
+    .help("Save recorded min/max values.");
+
+  // TODO Support --config
 
   arser.add_argument("--output_model").required(true).help("Output quantized model");
 
@@ -119,6 +167,10 @@ int entry(int argc, char **argv)
   auto output_model_path = arser.get<std::string>("--output_model");
   auto input_dtype = arser.get<std::string>("--input_dtype");
   auto output_dtype = arser.get<std::string>("--output_dtype");
+  auto quantized_dtype = arser.get<std::string>("--quantized_dtype");
+  auto granularity = arser.get<std::string>("--granularity");
+  auto TF_style_maxpool = arser["--TF-style_maxpool"] and arser.get<bool>("--TF-style_maxpool");
+  auto save_min_max = arser["--save_min_max"] and arser.get<bool>("--save_min_max");
 
   float qerror_ratio = arser.get<float>("--qerror_ratio");
   if (qerror_ratio < 0.0 || qerror_ratio > 1.f)
@@ -127,24 +179,54 @@ int entry(int argc, char **argv)
     return EXIT_FAILURE;
   }
 
+  if (arser[bisection_str] && arser[patterns_str])
+  {
+    // only one solver can be used for now
+    std::cerr << "ERROR: only one method is allowed to use" << std::endl;
+    return EXIT_FAILURE;
+  }
+
   SolverOutput::get() << ">> Searching mixed precision configuration \n"
                       << "model:" << input_model_path << "\n"
                       << "dataset: " << data_path << "\n"
+                      << "quantized dtype: " << quantized_dtype << "\n"
+                      << "granularity: " << granularity << "\n"
                       << "input dtype: " << input_dtype << "\n"
-                      << "output dtype: " << output_dtype << "\n";
+                      << "output dtype: " << output_dtype << "\n"
+                      << "TF_style_maxpool: " << (TF_style_maxpool ? "True" : "False") << "\n"
+                      << "save_min_max: " << (save_min_max ? "True" : "False") << "\n";
+
+  std::unique_ptr<mpqsolver::MPQSolver> solver;
+
+  // Create quantizer parameters
+  mpqsolver::core::Quantizer::Context ctx;
+  {
+    ctx.output_model_dtype = quantized_dtype;
+    ctx.granularity = granularity;
+    ctx.input_type = input_dtype;
+    ctx.output_type = output_dtype;
+    ctx.save_min_max = save_min_max;
+    ctx.TF_style_maxpool = TF_style_maxpool;
+  }
 
   if (arser[bisection_str])
   {
     // optimize
+    SolverOutput::get() << "Automatic mixed quantization using bisection\n";
+
     using namespace mpqsolver::bisection;
 
-    BisectionSolver solver(data_path, qerror_ratio, input_dtype, output_dtype);
+    auto bi_solver = std::make_unique<BisectionSolver>(ctx, qerror_ratio);
+    auto input_data =
+      std::make_unique<mpqsolver::core::H5FileDataProvider>(data_path, input_model_path);
+    bi_solver->setInputData(std::move(input_data));
+
     {
       auto value = arser.get<std::string>(bisection_str);
       if (value == "auto")
       {
         SolverOutput::get() << "algorithm: bisection (auto)\n";
-        if (!handleAutoAlgorithm(arser, solver))
+        if (!handleAutoAlgorithm(arser, *bi_solver))
         {
           return EXIT_FAILURE;
         }
@@ -152,12 +234,12 @@ int entry(int argc, char **argv)
       else if (value == "true")
       {
         SolverOutput::get() << "algorithm: bisection (Q16AtFront)";
-        solver.algorithm(BisectionSolver::Algorithm::ForceQ16Front);
+        bi_solver->algorithm(BisectionSolver::Algorithm::ForceQ16Front);
       }
       else if (value == "false")
       {
         SolverOutput::get() << "algorithm: bisection (Q8AtFront)";
-        solver.algorithm(BisectionSolver::Algorithm::ForceQ16Back);
+        bi_solver->algorithm(BisectionSolver::Algorithm::ForceQ16Back);
       }
       else
       {
@@ -167,42 +249,59 @@ int entry(int argc, char **argv)
       }
     }
 
-    if (arser[save_intermediate_str])
-    {
-      auto data_path = arser.get<std::string>(save_intermediate_str);
-      if (!data_path.empty())
-      {
-        solver.set_save_intermediate(data_path);
-      }
-    }
-
     SolverOutput::get() << "qerror metric: MAE\n"
                         << "target qerror ratio: " << qerror_ratio << "\n";
 
-    auto optimized = solver.run(input_model_path);
-    if (optimized == nullptr)
+    solver.reset(bi_solver.release());
+  }
+  else if (arser[patterns_str])
+  {
+    SolverOutput::get() << "Automatic mixed quantization using patterns\n";
+
+    std::vector<mpqsolver::pattern::QuantizationPattern> patterns;
+    if (arser[layernorm_str])
     {
-      std::cerr << "ERROR: Failed to build mixed precision model" << input_model_path << std::endl;
-      return EXIT_FAILURE;
+      patterns.push_back(mpqsolver::pattern::QuantizationPattern::Q8LayerNormWithQ16Variance);
+    }
+    if (arser[softmax_str])
+    {
+      patterns.push_back(mpqsolver::pattern::QuantizationPattern::Q8SoftmaxWithQ16SubExp);
     }
 
-    // save optimized
-    {
-      SolverOutput::get() << "Saving output model to " << output_model_path << "\n";
-      luci::CircleExporter exporter;
-      luci::CircleFileExpContract contract(optimized.get(), output_model_path);
-      if (!exporter.invoke(&contract))
-      {
-        std::cerr << "ERROR: Failed to export mixed precision model" << input_model_path
-                  << std::endl;
-        return EXIT_FAILURE;
-      }
-    }
+    solver = std::make_unique<mpqsolver::pattern::PatternSolver>(ctx, patterns);
   }
   else
   {
     std::cerr << "ERROR: Unrecognized solver" << std::endl;
     return EXIT_FAILURE;
+  }
+
+  if (arser[save_intermediate_str])
+  {
+    auto data_path = arser.get<std::string>(save_intermediate_str);
+    if (!data_path.empty())
+    {
+      solver->setSaveIntermediate(data_path);
+    }
+  }
+
+  auto optimized = solver->run(input_model_path);
+  if (optimized == nullptr)
+  {
+    std::cerr << "ERROR: Failed to build mixed precision model" << input_model_path << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // save optimized
+  {
+    SolverOutput::get() << "Saving output model to " << output_model_path << "\n";
+    luci::CircleExporter exporter;
+    luci::CircleFileExpContract contract(optimized.get(), output_model_path);
+    if (!exporter.invoke(&contract))
+    {
+      std::cerr << "ERROR: Failed to export mixed precision model" << input_model_path << std::endl;
+      return EXIT_FAILURE;
+    }
   }
 
   return EXIT_SUCCESS;

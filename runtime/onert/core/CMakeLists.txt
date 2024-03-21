@@ -9,13 +9,6 @@ if(NOT BUILD_MINMAX_H5DUMPER)
   list(REMOVE_ITEM SOURCES ${SRC_TO_REMOVE})
 endif(NOT BUILD_MINMAX_H5DUMPER)
 
-if(NOT ENABLE_ONERT_TRAIN)
-  file(GLOB_RECURSE SRC_TRAIN "src/*/train/*.cc")
-  list(REMOVE_ITEM SOURCES ${SRC_TRAIN})
-  file(GLOB_RECURSE SRC_TRAIN "src/*/*/train/*.cc")
-  list(REMOVE_ITEM SOURCES ${SRC_TRAIN})
-endif(NOT ENABLE_ONERT_TRAIN)
-
 add_library(onert_core SHARED ${SOURCES})
 set_target_properties(onert_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -24,6 +17,11 @@ set_target_properties(onert_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # To avoid mistake using private header in public header, do not define
 # private target_include_directories scope for src/ directory.
 target_include_directories(onert_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Flatbuffer for loader
+nnfw_find_package(FlatBuffers EXACT 23.5.26 REQUIRED)
+target_link_libraries(onert_core PRIVATE flatbuffers::flatbuffers-23.5.26)
+target_link_libraries(onert_core PRIVATE circle_schema)
 
 target_link_libraries(onert_core PRIVATE jsoncpp half)
 target_link_libraries(onert_core PRIVATE nnfw_lib_misc nnfw_lib_cker)
@@ -43,12 +41,6 @@ if(BUILD_MINMAX_H5DUMPER)
   target_include_directories(onert_core PRIVATE ${HDF5_INCLUDE_DIRS})
   target_link_libraries(onert_core PRIVATE ${HDF5_CXX_LIBRARIES})
 endif(BUILD_MINMAX_H5DUMPER)
-
-# Training feature
-# Use public to use this flag on all modules and tests
-if(ENABLE_ONERT_TRAIN)
-  target_compile_definitions(onert_core PUBLIC ONERT_TRAIN)
-endif(ENABLE_ONERT_TRAIN)
 
 if(CMAKE_BUILD_TYPE_LC STREQUAL "release")
   add_custom_command(TARGET onert_core POST_BUILD

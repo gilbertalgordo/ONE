@@ -84,21 +84,21 @@ public:
                                   std::unique_ptr<ITrainableOperation> &&operation);
 
   /**
-   * @brief Add a derivative to the graph with the given index and object
+   * @brief Add an operand for backwarding to the graph with the given index and object
    *
-   * If the given index is available, it succeeds. And @c derivative is moved which invalidates the
-   * caller's pointer. If the given index is already taken, it fails. And @c derivative will not be
-   * moved so the caller's pointer will be still valid.
+   * If the given index is available, it succeeds. And @c bwd_operand is moved which invalidates
+   * the caller's pointer. If the given index is already taken, it fails. And @c bwd_operand will
+   * not be moved so the caller's pointer will be still valid.
    *
-   * @param[in] index      Index to be added
-   * @param[in] derivative Derivative operand to be added
+   * @param[in] index       Index to be added
+   * @param[in] bwd_operand Backward operand to be added
    * @return OperandIndex @c index if successful, UNDEFINED otherwise
    */
-  OperandIndex addDerivative(OperandIndex index, std::unique_ptr<Operand> &&derivative);
+  OperandIndex addBackwardOperand(OperandIndex index, std::unique_ptr<Operand> &&bwd_operand);
 
 public:
   void changeShape(const OperandIndex &ind, const ir::Shape &new_shape) override;
-  void changeDerivativeShape(const OperandIndex &ind, const ir::Shape &new_shape);
+  void changeBackwardShape(const OperandIndex &ind, const ir::Shape &new_shape);
   void addInput(const OperandIndex &ind, const std::string &name = "");
   void addOutput(const OperandIndex &ind, const std::string &name = "");
   void addLoss(const OperandIndex &loss_ind, const IOIndex &pred_io_ind);
@@ -119,7 +119,7 @@ public:
   const Operands &operands() const override { return _graph.operands(); }
   Operands &operands() { return _graph.operands(); } // TODO Remove this non-const accessor
   const Operations &operations() const override { return _graph.operations(); }
-  const Operands &derivatives() const { return _derivatives; }
+  const Operands &backward_operands() const { return _backward_operands; }
   OperandIndex getLossIndex(const IOIndex &pred_io_ind) const;
   Layout layout() const { return _graph.layout(); }
   const Graph &graph() const { return _graph; }
@@ -127,13 +127,22 @@ public:
 public:
   const ITrainableOperation &operation(OperationIndex index) const;
 
+private:
+  void validateTopologicalOrder(std::vector<ir::OperationIndex> order, bool is_forward) const;
+  void validateForwardTopologicalOrder(const std::vector<ir::OperationIndex> &order) const;
+  void validateBackwardTopologicalOrder(const std::vector<ir::OperationIndex> &order) const;
+
 public:
   std::vector<ir::OperationIndex> topolSortOperations() const;
-  // TODO Support topological sort for backwarding
+  std::vector<ir::OperationIndex> btopolSortOperations() const;
+
+public:
+  std::vector<ir::OperationIndex>
+  truncateBackwardOrder(std::vector<ir::OperationIndex> backward_order) const;
 
 private:
   Graph _graph;
-  Operands _derivatives;
+  Operands _backward_operands;
 
   std::unordered_map<IOIndex, OperandIndex> _losses;
 };

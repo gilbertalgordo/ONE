@@ -55,11 +55,64 @@ void evalFloat(const circle::Tensor *input, const circle::Tensor *weights,
 
   int32_t output_shape[kMaxSmallSize];
   kernels::getTensorDims(output, runtime_graph, output_shape);
+  // TODO remove code duplication, introduce func
+#ifndef DIS_DYN_SHAPES
+  // Dynamic shape case
+  if (output_shape[0] != input_shape[0] or output_shape[1] != weight_shape[1])
+  {
+    output_shape[0] = input_shape[0];
+    output_shape[1] = weight_shape[0];
+    uint32_t num_dims = Tensor::num_dims(output);
+    luci_interpreter::RuntimeShape dynamic_shape(num_dims);
+    int32_t data_size = 1;
+    for (int i = 0; i < num_dims; ++i)
+    {
+      dynamic_shape.setDim(i, output_shape[i]);
+      data_size *= output_shape[i];
+    }
+    data_size *= size(Tensor::element_type(output));
 
-  luci_interpreter_pal::FullyConnected(
-    params, input_shape, kernels::getTensorData<float>(input_data), weight_shape,
-    kernels::getTensorData<float>(weights_data), kernels::getTensorData<float>(bias_data),
-    output_shape, kernels::getTensorData<float>(output_data));
+    runtime_graph->addDynamicShapeTensor(output, std::move(dynamic_shape));
+
+    if (data_size == 0)
+    {
+      runtime_graph->resetTensorData(nullptr, output);
+      return;
+    }
+
+    auto new_output_data = new uint8_t[data_size];
+    output_data = new_output_data;
+    runtime_graph->resetTensorData(new_output_data, output);
+  }
+#endif // DIS_DYN_SHAPES
+
+  switch (Tensor::element_type(weights))
+  {
+    case DataType::FLOAT32:
+    {
+      luci_interpreter_pal::FullyConnected(
+        params, input_shape, kernels::getTensorData<float>(input_data), weight_shape,
+        kernels::getTensorData<float>(weights_data), kernels::getTensorData<float>(bias_data),
+        output_shape, kernels::getTensorData<float>(output_data), Tensor::num_dims(output),
+        Tensor::num_dims(weights));
+      break;
+    }
+    case DataType::S8:
+    {
+      // Hybrid mode
+      params.weights_scales =
+        reinterpret_cast<const float *>(weights->quantization()->scale()->data());
+      params.is_channel_wise_quant = weights->quantization()->scale()->size() > 1;
+      luci_interpreter_pal::FullyConnected(
+        params, input_shape, kernels::getTensorData<float>(input_data), weight_shape,
+        kernels::getTensorData<int8_t>(weights_data), kernels::getTensorData<float>(bias_data),
+        output_shape, kernels::getTensorData<float>(output_data), Tensor::num_dims(output),
+        Tensor::num_dims(weights));
+      break;
+    }
+    default:
+      assert(false && "Unsupported hybrid weight type");
+  }
 }
 
 #ifndef DIS_QUANT
@@ -120,21 +173,24 @@ void evalQuantized(const circle::Tensor *input, const circle::Tensor *weights,
     luci_interpreter_pal::FullyConnected<int8_t>(
       op_params, input_shape, kernels::getTensorData<int8_t>(input_data), weights_shape,
       kernels::getTensorData<int8_t>(weights_data), kernels::getTensorData<int32_t>(bias_data),
-      output_shape, kernels::getTensorData<int8_t>(output_data));
+      output_shape, kernels::getTensorData<int8_t>(output_data), Tensor::num_dims(output),
+      Tensor::num_dims(weights));
   }
   else if (type == DataType::U8)
   {
     luci_interpreter_pal::FullyConnected<uint8_t>(
       op_params, input_shape, kernels::getTensorData<uint8_t>(input_data), weights_shape,
       kernels::getTensorData<uint8_t>(weights_data), kernels::getTensorData<int32_t>(bias_data),
-      output_shape, kernels::getTensorData<uint8_t>(output_data));
+      output_shape, kernels::getTensorData<uint8_t>(output_data), Tensor::num_dims(output),
+      Tensor::num_dims(weights));
   }
   else if (type == DataType::S16)
   {
     luci_interpreter_pal::FullyConnected(
       op_params, input_shape, kernels::getTensorData<int16_t>(input_data), weights_shape,
       kernels::getTensorData<int8_t>(weights_data), kernels::getTensorData<int64_t>(bias_data),
-      output_shape, kernels::getTensorData<int16_t>(output_data));
+      output_shape, kernels::getTensorData<int16_t>(output_data), Tensor::num_dims(output),
+      Tensor::num_dims(weights));
   }
   else
   {
@@ -167,7 +223,14 @@ void configure_kernel_CircleFullyConnected(const circle::Operator *cur_op,
   assert(output != nullptr);
 
 #ifndef DIS_FLOAT
-  if (Tensor::element_type(weights) == DataType::FLOAT32)
+  if (Tensor::element_type(weights) == DataType::S8 and
+      Tensor::element_type(input) == DataType::FLOAT32)
+  {
+    // hybrid mode
+    LUCI_INTERPRETER_CHECK(Tensor::element_type(output) == DataType::FLOAT32);
+    LUCI_INTERPRETER_CHECK(!bias || Tensor::element_type(bias) == DataType::FLOAT32)
+  }
+  else if (Tensor::element_type(weights) == DataType::FLOAT32)
   {
     LUCI_INTERPRETER_CHECK(Tensor::element_type(input) == DataType::FLOAT32);
     LUCI_INTERPRETER_CHECK(Tensor::element_type(output) == DataType::FLOAT32);
@@ -184,11 +247,18 @@ void configure_kernel_CircleFullyConnected(const circle::Operator *cur_op,
   else if (Tensor::element_type(weights) == DataType::S8)
   {
     LUCI_INTERPRETER_CHECK(Tensor::element_type(input) == DataType::S8 ||
-                           Tensor::element_type(input) == DataType::S16);
+                           Tensor::element_type(input) == DataType::FLOAT32);
     LUCI_INTERPRETER_CHECK(Tensor::element_type(output) == DataType::S8 ||
-                           Tensor::element_type(output) == DataType::S16);
+                           Tensor::element_type(output) == DataType::FLOAT32);
     LUCI_INTERPRETER_CHECK(!bias || Tensor::element_type(bias) == DataType::S32 ||
-                           Tensor::element_type(bias) == DataType::S64)
+                           Tensor::element_type(bias) == DataType::S64 ||
+                           Tensor::element_type(bias) == DataType::FLOAT32)
+    if (Tensor::element_type(input) == DataType::FLOAT32)
+    {
+      // Check it is channel wise quantization
+      LUCI_INTERPRETER_CHECK(weights->quantization() != nullptr);
+      LUCI_INTERPRETER_CHECK(weights->quantization()->scale() != nullptr);
+    }
   }
 #endif // DIS_QUANT
   else
@@ -206,11 +276,6 @@ void configure_kernel_CircleFullyConnected(const circle::Operator *cur_op,
 
   if (bias)
     LUCI_INTERPRETER_CHECK(Tensor::num_elements(bias) == Tensor::dim(weights, 0));
-
-  const auto *options = cur_op->builtin_options_as_FullyConnectedOptions();
-
-  // TODO: handle with it
-  assert(options->keep_num_dims() == false);
 }
 
 // TODO think how remove unused param

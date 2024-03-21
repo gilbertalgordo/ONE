@@ -42,16 +42,13 @@ public:
   LossLayer();
 
   void configure(const IPortableTensor *y_pred, const IPortableTensor *y_true,
-                 IPortableTensor *output, IPortableTensor *deriv_y_pred, LossType loss_type);
-  void forward(bool training) override;
-  void backward() override;
+                 IPortableTensor *output, IPortableTensor *back_prop_y_pred);
 
-private:
+protected:
   const IPortableTensor *_y_pred;
   const IPortableTensor *_y_true;
   IPortableTensor *_output;
-  IPortableTensor *_deriv_y_pred;
-  LossType _loss_type;
+  IPortableTensor *_back_prop_y_pred;
 };
 
 } // namespace ops

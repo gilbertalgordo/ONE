@@ -19,9 +19,9 @@
 
 #include <luci/IR/Module.h>
 
-#include <core/Quantizer.h>
-#include <core/SolverHooks.h>
-#include <core/Dumper.h>
+#include "core/Quantizer.h"
+#include "core/SolverHooks.h"
+#include "core/Dumper.h"
 
 #include <string>
 
@@ -40,42 +40,42 @@ public:
    * @brief DumpingHooks constructor
    * @param save_path directory where all intermediate data will be saved
    */
-  DumpingHooks(const std::string &save_path);
+  DumpingHooks(const std::string &save_path, const Quantizer::Context &ctx);
 
   /**
    * @brief called on successfull quantization
    */
-  virtual void on_quantized(luci::Module *module) const override;
+  virtual void onQuantized(luci::Module *module) const override;
 
   /**
-   * @brief called on the start of iterative search
+   * @brief called on the start of mpq search
    */
-  virtual void on_begin_solver(const std::string &model_path, float q8error,
-                               float q16error) override;
+  virtual void onBeginSolver(const std::string &model_path, float q8error, float q16error) override;
 
   /**
    * @brief called on the start of current iteration
    */
-  virtual void on_begin_iteration() override;
+  virtual void onBeginIteration() override;
 
   /**
    * @brief called at the end of current iteration
    */
-  virtual void on_end_iteration(const LayerParams &layers, const std::string &def_dtype,
-                                float error) const override;
+  virtual void onEndIteration(const LayerParams &layers, const std::string &def_dtype,
+                              float error) override;
 
   /**
-   * @brief called at the end of iterative search
+   * @brief called at the end of mpq search
    */
-  virtual void on_end_solver(const LayerParams &layers, const std::string &def_dtype,
-                             float qerror) override;
+  virtual void onEndSolver(const LayerParams &layers, const std::string &def_dtype,
+                           float qerror) override;
 
-protected:
+private:
   std::string _model_path;
   std::string _save_path;
   Dumper _dumper;
   uint32_t _num_of_iterations = 0;
   bool _in_iterations = false;
+  Quantizer::Context _ctx;
 };
 
 } // namespace core

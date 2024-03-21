@@ -21,3 +21,8 @@ DATA_CHEF(FLOAT32, gaussian, GaussianFloat32DataChefFactory)
 DATA_CHEF(INT32, gaussian, GaussianInt32DataChefFactory)
 DATA_CHEF(INT16, gaussian, GaussianInt16DataChefFactory)
 DATA_CHEF(UINT8, gaussian, GaussianUint8DataChefFactory)
+
+DATA_CHEF(INT4, constant, ConstantInt4DataChefFactory)
+DATA_CHEF(UINT4, constant, ConstantUint4DataChefFactory)
+DATA_CHEF(INT4, explicit, ExplicitInt4DataChefFactory)
+DATA_CHEF(UINT4, explicit, ExplicitUint4DataChefFactory)

@@ -149,6 +149,9 @@ one-optimize
 one-optimize provides network or operator transformation shown below.
 
 Current transformation options are
+- common_subexpression_elimination : This will perform common subexpression elimination.
+- decompose_hardswish : This will decompose hardswish operator to Add, Mul and Relu6 operators.
+- decompose_softmax : This will decompose softmax into multiple operators for special backends.
 - disable_validation : This will turn off operator validations.
 - expand_broadcast_const : This will expand broadcastable constant node inputs
 - fold_add_v2 : This removes AddV2 operation which can be folded
@@ -157,13 +160,18 @@ Current transformation options are
 - fold_dequantize : This removes Dequantize operation which can be folded
 - fold_dwconv : This folds Depthwise Convolution operation which can be folded
 - fold_gather : This removes Gather operation which can be folded
+- fold_shape : This removes Shape operation which can be folded
 - fold_sparse_to_dense : This removes SparseToDense operation which can be folded
 - forward_reshape_to_unaryop: This will move Reshape after UnaryOp for centain condition
+- fuse_add_with_conv: This fuses Add operator with the preceding Convolution operator if possible
 - fuse_add_with_fully_connected: This fuses Add operator with the preceding FullyConnected operator if possible
 - fuse_add_with_tconv: This fuses Add operator with the preceding TConv operator if possible
 - fuse_batchnorm_with_conv : This fuses BatchNorm operator to convolution operator
 - fuse_batchnorm_with_dwconv : This fuses BatchNorm operator to depthwise convolution operator
 - fuse_batchnorm_with_tconv : This fuses BatchNorm operator to transpose convolution operator
+- fuse_mul_with_conv: This fuses Mul with a preceding Convolution op if possible.
+- fuse_mul_with_div: This fuses Mul and Div op as Div.
+- fuse_slice_with_tconv: This fuses Slice with a preceding TConv if possible.
 - fuse_bcq: This enables Binary-Coded-bases Quantized DNNs
    - read https://arxiv.org/abs/2005.09904 for detailed information
 - fuse_instnorm: This will convert instance normalization related operators to
@@ -174,20 +182,25 @@ Current transformation options are
 - fuse_activation_function: This fuses Activation function to a preceding operator.
 - fuse_mean_with_mean: This fuses two consecutive ReduceMean operations into one.
 - fuse_transpose_with_mean: This fuses ReduceMean with a preceding Transpose under certain conditions.
+- fuse_horizontal_fc_layers: This fuses horizontal FullyConnected layers under certain conditions.
 - make_batchnorm_gamma_positive: This makes negative gamma of batch normalization into a small positive value (1e-10).
   Note that this pass can change the execution result of the model.
   So, use it only when the impact is known to be acceptable.
 - mute_warnings : This will turn off warning messages.
 - generate_profile_data : This will turn on profiling data generation.
 - remove_fakequant : This will remove all fakequant operators.
+- remove_gather_guard : This will remove Add/FloorMod guards of Gather indices with certain conditions.
+  CAUTION: user must guarantee that indices are all non-negative values.
 - remove_quantdequant : This will remove all Quantize-Dequantize sequence.
 - remove_redundant_quantize : This removes redundant quantize operators.
 - remove_redundant_reshape : This fuses or removes redundant reshape operators.
 - remove_redundant_transpose : This fuses or removes redundant transpose operators.
+- remove_unnecessary_add : This removes unnecessary add operators.
 - remove_unnecessary_reshape : This removes unnecessary reshape operators.
 - remove_unnecessary_slice : This removes unnecessary slice operators.
 - remove_unnecessary_strided_slice : This removes unnecessary strided slice operators.
 - remove_unnecessary_split : This removes unnecessary split operators.
+- remove_unnecessary_transpose: This removes unnecessary transpose operators.
 - replace_cw_mul_add_with_depthwise_conv: This will replace channel-wise Mul/Add with DepthwiseConv2D.
 - resolve_customop_add: This will convert Custom(Add) to normal Add operator
 - resolve_customop_batchmatmul: This will convert Custom(BatchMatMul) to

@@ -15,6 +15,8 @@
  */
 
 #include "args.h"
+#include "nnfw_util.h"
+#include "misc/to_underlying.h"
 
 #include <functional>
 #include <iostream>
@@ -96,6 +98,34 @@ void checkPackage(const std::string &package_filename)
   }
 }
 
+// check the value is in the valid_args list and return the corresponded enum
+template <typename T>
+T checkValidation(const std::string &arg_name, const std::vector<T> &valid_args, int value)
+{
+  for (const auto arg : valid_args)
+  {
+    if (value == nnfw::misc::to_underlying(arg))
+      return arg;
+  }
+  std::cerr << arg_name + " " + std::to_string(value) + " is unsupported argument\n";
+  exit(1);
+}
+
+// generate a help message based on the valid_args and default_arg
+template <typename T>
+std::string genHelpMsg(const std::string &arg_name, const std::vector<T> &valid_args)
+{
+  std::string msg = arg_name + "\n";
+  msg += "If not given, model's hyper parameter is used\n";
+  for (const auto arg : valid_args)
+  {
+    const auto num = nnfw::misc::to_underlying(arg);
+    msg += std::to_string(num) + ": " + onert_train::to_string(arg) + "\n";
+  }
+  msg.erase(msg.length() - 1); // remove last \n
+  return msg;
+}
+
 } // namespace
 
 namespace onert_train
@@ -150,6 +180,8 @@ void Args::Initialize(void)
     }
   };
 
+  auto process_export_path = [&](const std::string &path) { _export_model_filename = path; };
+
   auto process_load_raw_inputfile = [&](const std::string &input_filename) {
     _load_raw_input_filename = input_filename;
 
@@ -162,6 +194,15 @@ void Args::Initialize(void)
 
     std::cerr << "Model Expected Filename " << _load_raw_expected_filename << std::endl;
     checkModelfile(_load_raw_expected_filename);
+  };
+
+  auto process_validation_split = [&](const float v) {
+    if (v < 0.f || v > 1.f)
+    {
+      std::cerr << "Invalid validation_split. Float between 0 and 1." << std::endl;
+      exit(1);
+    }
+    _validation_split = v;
   };
 
   auto process_output_sizes = [&](const std::string &output_sizes_json_str) {
@@ -198,38 +239,52 @@ void Args::Initialize(void)
     ("nnpackage", po::value<std::string>()->notifier(process_nnpackage), "NN Package file(directory) name")
     ("modelfile", po::value<std::string>()->notifier(process_modelfile), "NN Model filename")
     ("path", po::value<std::string>()->notifier(process_path), "NN Package or NN Modelfile path")
-    ("data_length", po::value<int>()->default_value(-1)->notifier([&](const auto &v) { _data_length = v; }), "Data length number")
+    ("export_path", po::value<std::string>()->notifier(process_export_path), "Path to export circle")
     ("load_input:raw", po::value<std::string>()->notifier(process_load_raw_inputfile),
          "NN Model Raw Input data file\n"
          "The datafile must have data for each input number.\n"
          "If there are 3 inputs, the data of input0 must exist as much as data_length, "
-         "and the data for input1 and input2 must be held sequentially as data_length.\n"
+         "and the data for input1 and input2 must be held sequentially as data_length."
     )
     ("load_expected:raw", po::value<std::string>()->notifier(process_load_raw_expectedfile),
          "NN Model Raw Expected data file\n"
-         "(Same data policy with load_input:raw)\n"
+         "(Same data policy with load_input:raw)"
     )
-    ("mem_poll,m", po::value<bool>()->default_value(false)->notifier([&](const auto &v) { _mem_poll = v; }), "Check memory polling")
+    ("mem_poll,m", po::value<bool>()->default_value(false)->notifier([&](const auto &v) { _mem_poll = v; }), "Check memory polling (default: false)")
     ("epoch", po::value<int>()->default_value(5)->notifier([&](const auto &v) { _epoch = v; }), "Epoch number (default: 5)")
-    ("batch_size", po::value<int>()->default_value(32)->notifier([&](const auto &v) { _batch_size = v; }), "Batch size (default: 32)")
-    ("learning_rate", po::value<float>()->default_value(1.0e-4)->notifier([&](const auto &v) { _learning_rate = v; }), "Learning rate (default: 1.0e-4)")
-    ("loss", po::value<int>()->default_value(0)->notifier([&] (const auto &v) { _loss_type = v; }),
-        "Loss type\n"
-        "0: MEAN_SQUARED_ERROR (default)\n"
-        "1: CATEGORICAL_CROSSENTROPY\n")
-    ("optimizer", po::value<int>()->default_value(0)->notifier([&] (const auto &v) { _optimizer_type = v; }),
-      "Optimizer type\n"
-      "0: SGD (default)\n"
-      "1: Adam\n")
+    ("batch_size", po::value<int>()->notifier([&](const auto &v) { _batch_size = v; }), 
+      "Batch size\n"
+      "If not given, model's hyper parameter is used")
+    ("learning_rate", po::value<float>()->notifier([&](const auto &v) { _learning_rate = v; }), 
+      "Learning rate\n"
+      "If not given, model's hyper parameter is used")
+    ("loss", po::value<int>()
+      ->notifier([&](const auto& v){_loss_type = checkValidation("loss", valid_loss, v);}),
+      genHelpMsg("Loss type", valid_loss).c_str()
+    )
+    ("loss_reduction_type", po::value<int>()
+      ->notifier([&](const auto &v){_loss_reduction_type = checkValidation("loss_reduction_type", valid_loss_rdt, v);}),
+      genHelpMsg("Loss Reduction type", valid_loss_rdt).c_str()
+    )
+    ("optimizer", po::value<int>()
+      ->notifier([&](const auto& v){_optimizer_type = checkValidation("optimizer", valid_optim, v);}),
+      genHelpMsg("Optimizer type", valid_optim).c_str()
+    )
+    ("metric", po::value<int>()->default_value(-1)->notifier([&] (const auto &v) { _metric_type = v; }),
+      "Metric type\n"
+      "Simply calculates the metric value using the variables (default: none)\n"
+      "0: CATEGORICAL_ACCURACY")
+    ("validation_split", po::value<float>()->default_value(0.0f)->notifier(process_validation_split),
+         "Float between 0 and 1(0 < float < 1). Fraction of the training data to be used as validation data.")
     ("verbose_level,v", po::value<int>()->default_value(0)->notifier([&](const auto &v) { _verbose_level = v; }),
          "Verbose level\n"
          "0: prints the only result. Messages btw run don't print\n"
          "1: prints result and message btw run\n"
-         "2: prints all of messages to print\n")
+         "2: prints all of messages to print")
     ("output_sizes", po::value<std::string>()->notifier(process_output_sizes),
         "The output buffer size in JSON 1D array\n"
         "If not given, the model's output sizes are used\n"
-        "e.g. '[0, 40, 2, 80]' to set 0th tensor to 40 and 2nd tensor to 80.\n")
+        "e.g. '[0, 40, 2, 80]' to set 0th tensor to 40 and 2nd tensor to 80.")
     ;
   // clang-format on
 
@@ -246,7 +301,7 @@ void Args::Parse(const int argc, char **argv)
   if (vm.count("help"))
   {
     std::cout << "onert_train\n\n";
-    std::cout << "Usage: " << argv[0] << "[model path] [<options>]\n\n";
+    std::cout << "Usage: " << argv[0] << " [model path] [<options>]\n\n";
     std::cout << _options;
     std::cout << "\n";
 

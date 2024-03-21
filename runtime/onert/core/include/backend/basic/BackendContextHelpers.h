@@ -63,7 +63,7 @@ template <typename T_BackendContext> void planTensors(const T_BackendContext &ct
     if (!tensor_builder->isRegistered(ind))
     {
       // These tensors do not exist in any  (No use and def)
-      const auto info = obj.info();
+      const auto &info = obj.info();
       // NOTE Currently we only support NHWC tensors for cpu-common tensors.
       //      There is no way to get the layout info from the backend context for now.
       //      When we support NCHW tensors as well, we also need to change tensor info to be
@@ -201,9 +201,7 @@ template <typename T_BackendContext> ITensorRegistry *genTensors(T_BackendContex
       return;
     // NOTE Assuming there is no layout changes (Always assume NHWC or UNKNOWN)
     assert(graph.layout() != ir::Layout::NCHW);
-    ir::OperandInfo backend_info{obj.shape(), obj.typeInfo(), obj.info().memAllocType(),
-                                 obj.isConstant()};
-    tensor_builder->registerTensorInfo(ind, backend_info, ir::Layout::NHWC);
+    tensor_builder->registerTensorInfo(ind, obj.info(), ir::Layout::NHWC);
   });
 
   // TODO Get compiler options from compiler, and use it rather than getting it from Env

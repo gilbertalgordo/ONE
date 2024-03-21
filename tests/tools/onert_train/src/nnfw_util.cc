@@ -16,7 +16,11 @@
 
 #include <cassert>
 #include <string>
+#include <iostream>
+#include <unordered_map>
+
 #include "nnfw.h"
+#include "nnfw_experimental.h"
 
 namespace onert_train
 {
@@ -44,6 +48,68 @@ uint64_t bufsize_for(const nnfw_tensorinfo *ti)
     sizeof(int16_t), /* NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED = 7 */
   };
   return elmsize[ti->dtype] * num_elems(ti);
+}
+
+std::string to_string(NNFW_TRAIN_OPTIMIZER opt)
+{
+  static const std::unordered_map<NNFW_TRAIN_OPTIMIZER, std::string> name_map{
+    {NNFW_TRAIN_OPTIMIZER_UNDEFINED, "undefined"},
+    {NNFW_TRAIN_OPTIMIZER_SGD, "sgd"},
+    {NNFW_TRAIN_OPTIMIZER_ADAM, "adam"},
+  };
+  return name_map.at(opt);
+}
+
+std::string to_string(NNFW_TRAIN_LOSS loss)
+{
+  static const std::unordered_map<NNFW_TRAIN_LOSS, std::string> name_map{
+    {NNFW_TRAIN_LOSS_UNDEFINED, "undefined"},
+    {NNFW_TRAIN_LOSS_MEAN_SQUARED_ERROR, "mean squared error"},
+    {NNFW_TRAIN_LOSS_CATEGORICAL_CROSSENTROPY, "categorical crossentropy"},
+  };
+  return name_map.at(loss);
+}
+
+std::string to_string(NNFW_TRAIN_LOSS_REDUCTION loss_rdt)
+{
+  static const std::unordered_map<NNFW_TRAIN_LOSS_REDUCTION, std::string> name_map{
+    {NNFW_TRAIN_LOSS_REDUCTION_UNDEFINED, "undefined"},
+    {NNFW_TRAIN_LOSS_REDUCTION_SUM_OVER_BATCH_SIZE, "sum over batch size"},
+    {NNFW_TRAIN_LOSS_REDUCTION_SUM, "sum"}};
+  return name_map.at(loss_rdt);
+}
+
+std::ostream &operator<<(std::ostream &os, const NNFW_TRAIN_OPTIMIZER &opt)
+{
+  os << to_string(opt);
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const NNFW_TRAIN_LOSS &loss)
+{
+  os << to_string(loss);
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const NNFW_TRAIN_LOSS_REDUCTION &loss_reduction)
+{
+  os << to_string(loss_reduction);
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const nnfw_loss_info &loss_info)
+{
+  os << "{loss = " << loss_info.loss << ", reduction = " << loss_info.reduction_type << "}";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const nnfw_train_info &info)
+{
+  os << "- learning_rate   = " << info.learning_rate << "\n";
+  os << "- batch_size      = " << info.batch_size << "\n";
+  os << "- loss_info       = " << info.loss_info << "\n";
+  os << "- optimizer       = " << info.opt << "\n";
+  return os;
 }
 
 } // namespace onert_train

@@ -30,6 +30,18 @@ namespace train
 namespace ops
 {
 
+/**
+ * This is to register the pair of (forward, backward) training kernel.
+ */
+class TrainingKernelRegistry
+{
+public:
+  virtual void forward(const IPortableTensor *in, IPortableTensor *out) = 0;
+  virtual void backward(const IPortableTensor *back_prop_out, IPortableTensor *back_prop_in) = 0;
+  TrainingKernelRegistry() = default;
+  virtual ~TrainingKernelRegistry() = default;
+};
+
 enum class PoolType
 {
   kMax,
@@ -46,9 +58,17 @@ public:
                  const uint32_t paddingBottom, const uint32_t strideWidth,
                  const uint32_t strideHeight, const uint32_t kernelWidth,
                  const uint32_t kernelHeight, const ir::Activation activation,
-                 IPortableTensor *output, const PoolType op_type);
+                 IPortableTensor *output, const PoolType op_type, IPortableTensor *back_prop_input,
+                 const IPortableTensor *back_prop_output);
+
   void forward(bool training) override;
   void backward() override;
+
+private:
+  IPortableTensor *_back_prop_input;
+  const IPortableTensor *_back_prop_output;
+
+  std::unique_ptr<TrainingKernelRegistry> _kernel;
 };
 
 } // namespace ops

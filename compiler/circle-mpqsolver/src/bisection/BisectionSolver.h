@@ -17,8 +17,8 @@
 #ifndef __MPQSOLVER_BISECTION_SOLVER_H__
 #define __MPQSOLVER_BISECTION_SOLVER_H__
 
-#include <core/Evaluator.h>
-#include <MPQSolver.h>
+#include "core/Evaluator.h"
+#include "MPQSolver.h"
 
 #include <luci/IR/Module.h>
 
@@ -45,18 +45,24 @@ public:
 
 public:
   /**
-   * @brief construct Solver using input_data_path for .h5 file,
-   * qerror_ratio to set target qerror, and input_quantization/output_quantization to set
-   * quantization type at input/output respectively
+   * @brief Construct a new Bisection Solver object
+   *
+   * @param ctx - quantizer context
+   * @param qerror_ratio - target error ratio
    */
-  BisectionSolver(const std::string &input_data_path, float qerror_ratio,
-                  const std::string &input_quantization, const std::string &output_quantization);
+  BisectionSolver(const mpqsolver::core::Quantizer::Context &ctx, float qerror_ratio);
+
   BisectionSolver() = delete;
 
   /**
    * @brief run bisection for recorded float module at module_path
    */
   std::unique_ptr<luci::Module> run(const std::string &module_path) override;
+
+  /**
+   * @brief set data provider
+   */
+  void setInputData(std::unique_ptr<mpqsolver::core::DataProvider> &&data);
 
   /**
    * @brief set used algorithm
@@ -75,9 +81,11 @@ private:
                  const std::string &def_quant, core::LayerParams &layers);
 
 private:
-  float _qerror = 0.f; // quantization error
+  const float _qerror_ratio = 0.f; // quantization error ratio
+  float _qerror = 0.f;             // quantization error
   Algorithm _algorithm = Algorithm::ForceQ16Front;
   std::string _visq_data_path;
+  std::unique_ptr<mpqsolver::core::DataProvider> _input_data;
 };
 
 } // namespace bisection

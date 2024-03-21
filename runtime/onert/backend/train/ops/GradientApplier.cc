@@ -32,7 +32,7 @@ GradientApplier::GradientApplier() : _optimizer{nullptr}, _gradient_tensor{}, _t
   // DO NOTHING
 }
 
-void GradientApplier::configure(std::shared_ptr<exec::train::optimizer::Optimizer> optimizer,
+void GradientApplier::configure(const exec::train::optimizer::Optimizer *optimizer,
                                 const IPortableTensor *gradient, ITrainableTensor *trainable)
 {
   _optimizer = optimizer;

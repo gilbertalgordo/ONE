@@ -43,8 +43,11 @@ bool TFliteImport::select_sub_graph(uint32_t sgindex)
   _operators = nullptr;
   _inputs.clear();
   _outputs.clear();
+  clear_tensor_filler();
+  clear_tensor_filler_vint32();
+  clear_tensor_filler_vfloat();
 
-  if (_subgraphs->Length() <= sgindex)
+  if (_subgraphs->size() <= sgindex)
   {
     assert(false);
     return false;
