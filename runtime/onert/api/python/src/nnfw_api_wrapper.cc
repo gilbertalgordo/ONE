@@ -163,14 +163,6 @@ NNFW_SESSION::NNFW_SESSION(const char *package_file_path, const char *backends)
   ensure_status(nnfw_set_available_backends(this->session, backends));
   ensure_status(nnfw_prepare(this->session));
 }
-NNFW_SESSION::NNFW_SESSION(const char *package_file_path, const char *op, const char *backend)
-{
-  this->session = nullptr;
-  ensure_status(nnfw_create_session(&(this->session)));
-  ensure_status(nnfw_load_model_from_file(this->session, package_file_path));
-  ensure_status(nnfw_set_op_backend(this->session, op, backend));
-  ensure_status(nnfw_prepare(this->session));
-}
 NNFW_SESSION::~NNFW_SESSION()
 {
   if (session)
@@ -197,7 +189,7 @@ void NNFW_SESSION::set_input_tensorinfo(uint32_t index, const tensorinfo *tensor
 }
 void NNFW_SESSION::run() { ensure_status(nnfw_run(session)); }
 void NNFW_SESSION::run_async() { ensure_status(nnfw_run_async(session)); }
-void NNFW_SESSION::await() { ensure_status(nnfw_await(session)); }
+void NNFW_SESSION::wait() { ensure_status(nnfw_await(session)); }
 uint32_t NNFW_SESSION::input_size()
 {
   uint32_t number;

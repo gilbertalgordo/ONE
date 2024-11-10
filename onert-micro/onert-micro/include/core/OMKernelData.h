@@ -50,6 +50,23 @@ struct SoftmaxParams
   int diff_min;
   int num_rows;
   int row_size;
+  int32_t input_zp;
+  int32_t output_zp;
+  float input_scale;
+  float output_scale;
+};
+
+struct LogSoftmaxParams
+{
+  int num_rows;
+  int row_size;
+};
+
+struct L2NormalizationParams
+{
+  int num_rows;
+  int row_size;
+  float epsilon = 1e-6;
 };
 
 struct Pool2DParams
@@ -84,6 +101,28 @@ struct StridedSliceParams
   int16_t shrink_axis_mask;
 };
 
+struct TransposeParams
+{
+  int32_t perm_count;
+  int32_t perm[5];
+};
+
+struct ArithmeticQuantParams
+{
+  int32_t input1_offset;
+  int32_t input2_offset;
+  int left_shift;
+  int32_t input1_multiplier;
+  int32_t input2_multiplier;
+  int input1_shift;
+  int input2_shift;
+  int32_t output_multiplier;
+  int output_shift;
+  int32_t output_offset;
+  int32_t quantized_activation_max;
+  int32_t quantized_activation_min;
+};
+
 struct BinaryArithmeticBroadcastParams
 {
   // float activation params.
@@ -96,12 +135,41 @@ struct BinaryArithmeticBroadcastParams
   BroadcastableOpCategory broadcast_category;
 };
 
+struct ConvQuant
+{
+  int32_t pad_h;
+  int32_t pad_w;
+  int32_t stride_w;
+  int32_t stride_h;
+  int32_t stride_width;
+  int32_t stride_height;
+  int32_t dilation_width_factor;
+  int32_t dilation_height_factor;
+  int32_t input_offset;
+  int32_t weights_offset;
+  int32_t output_offset;
+  int32_t output_multiplier;
+  int32_t output_shift;
+  int32_t quantized_activation_min;
+  int32_t quantized_activation_max;
+  int32_t depth_multiplier;
+  std::vector<int32_t> per_channel_output_multiplier;
+  std::vector<int> per_channel_output_shift;
+};
+
+struct SplitParams
+{
+  uint8_t *output_data[5];
+  uint32_t num_outputs;
+};
+
 struct FloatConv2D
 {
   int32_t stride_w;
   int32_t stride_h;
   int32_t dilation_width_factor;
   int32_t dilation_height_factor;
+  int32_t depth_multiplier;
   int32_t pad_h;
   int32_t pad_w;
   float activation_min;
@@ -118,10 +186,60 @@ struct FullyConnectedParams
   int32_t weights_offset;
   int32_t output_offset;
   int32_t output_multiplier;
+  const float *weights_scales;
+  bool is_channel_wise_quant;
   int output_shift;
   // uint8_t, etc, activation params.
   int32_t quantized_activation_min;
   int32_t quantized_activation_max;
+};
+
+struct PadParams
+{
+  int32_t left_padding_count;
+  int32_t left_padding[5];
+  int32_t right_padding_count;
+  int32_t right_padding[5];
+};
+
+struct ComparisonParams
+{
+  // uint8_t inference params.
+  int left_shift;
+  int32_t input1_offset;
+  int32_t input1_multiplier;
+  int input1_shift;
+  int32_t input2_offset;
+  int32_t input2_multiplier;
+  int input2_shift;
+  // Shape dependent / common to inference types.
+  bool is_broadcast;
+};
+
+struct QuantizationParams
+{
+  float scale;
+  int32_t zero_point;
+};
+
+struct SliceParams
+{
+  int8_t begin_count;
+  int32_t begin[5];
+  int8_t size_count;
+  int32_t size[5];
+};
+
+struct SVDFQuantParams
+{
+  int32_t input_zero_point;
+  int32_t output_zero_point;
+  int32_t activation_state_zero_point;
+  int32_t effective_scale_1_a;
+  int effective_scale_1_b;
+  int32_t effective_scale_2_a;
+  int effective_scale_2_b;
+  int rank;
 };
 
 } // namespace core

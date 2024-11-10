@@ -18,6 +18,8 @@
 #define __ONERT_BACKEND_TRAIN_OPS_OPERATION_UTILS_H__
 
 #include <ops/OperationUtils.h>
+#include <cker/train/Types.h>
+#include <ir/train/LossInfo.h>
 
 namespace onert
 {
@@ -31,10 +33,17 @@ namespace ops
 using OperandType = onert::ir::DataType;
 using cpu::ops::getBuffer;
 using cpu::ops::getPaddingType;
-using cpu::ops::getShape;
 using cpu::ops::getNumberOfDimensions;
 using cpu::ops::getNumberOfElements;
 using cpu::ops::getSizeOfDimension;
+
+/**
+ * @brief Get shape of tensor
+ *
+ * @param tensor tensor to get shape
+ * @return Shape to be used in cker
+ */
+nnfw::cker::Shape getShape(const IPortableTensor *tensor);
 
 /**
  * @brief backpropagate acitvation
@@ -69,6 +78,14 @@ const IPortableTensor *backpropActivation(const ir::Activation &activation,
  * @param bias_grad      gradient tensor of bias
  */
 void biasGrad(const IPortableTensor *input_backprop, IPortableTensor *bias_grad);
+
+/**
+ * @brief convert loss reduction type
+ *
+ * @param type loss reduction type defined in ir::train::LossReductionType
+ * @return corresponding type defined in cker::train::LossReductionType
+ */
+nnfw::cker::train::LossReductionType convertLossReductionType(ir::train::LossReductionType type);
 
 } // namespace ops
 } // namespace train

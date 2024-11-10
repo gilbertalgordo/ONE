@@ -1,3 +1,35 @@
+one (1.29.0) bionic focal jammy; urgency=medium
+
+  * Support more optimization option(s): `--transform_sqrt_div_to_rsqrt_mul`, `--fold_mul`,
+    `--fuse_add_to_fullyconnected_bias`, `--fuse_mul_to_fullyconnected_weights`,
+    `--fuse_mul_with_fullyconnected`.
+  * Add more optimization: `CanonicalizePass`.
+  * _tflite2circle_ supports more data types: FLOAT64, UINT64, UINT32, UINT16.
+  * _luci-interpreter_ supports more data types on some ops.
+  * Support multiple option names in command schema.
+
+ -- seongwoo <mhs4670go@naver.com>  Thu, 29 Aug 2024 13:57:11 +0900
+
+one (1.27.1) bionic focal; urgency=medium
+
+  * Command schema supports multiple names.
+  * Fix invalid warning on boolean type option in _onecc_.
+
+ -- seongwoo <mhs4670go@naver.com>  Wed, 10 Jul 2024 16:18:33 +0900
+
+one (1.27.0) bionic focal; urgency=medium
+
+  * Support more Op(s): CircleGRU, CircleRelu0To1
+  *  Support more optimization option(s): `resolve_former_customop`, `--forward_transpose_op`,
+    `fold_shape`, `remove_gather_guard`, `fuse_add_with_conv`, `fold_squeeze`, `fuse_rsqrt`
+  * Support INT4, UINT4 data types
+  * Support 4bit quantization of ONNX fake quantize model
+  * Introduce global configuration target feature
+  * Introduce command schema feature
+  * Use C++17
+
+ -- seongwoo <seongwoo@sw>  Thu, 27 Jun 2024 10:44:00 +0900
+
 one (1.26.0) bionic; urgency=medium
 
   * Support more Op(s): HardSwish, CumSum, BroadcastTo

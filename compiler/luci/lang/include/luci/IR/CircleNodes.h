@@ -94,6 +94,7 @@
 #include "Nodes/CircleReduceMin.h"
 #include "Nodes/CircleReduceProd.h"
 #include "Nodes/CircleRelu.h"
+#include "Nodes/CircleRelu0To1.h"
 #include "Nodes/CircleRelu6.h"
 #include "Nodes/CircleReluN1To1.h"
 #include "Nodes/CircleReshape.h"
@@ -140,6 +141,8 @@
 #include "Nodes/CircleBCQGather.h"
 #include "Nodes/CircleGRU.h"
 #include "Nodes/CircleInstanceNorm.h"
+#include "Nodes/CircleRmsNorm.h"
+#include "Nodes/CircleRoPE.h"
 // Virtual nodes
 #include "Nodes/CircleConst.h"
 #include "Nodes/CircleInput.h"

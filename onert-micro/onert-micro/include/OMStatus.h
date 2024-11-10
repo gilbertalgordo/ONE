@@ -31,8 +31,10 @@ enum OMStatus
   ModelNotImport,
   FailedCheckCondition,
   NoQuantization,
-  UnsupportedQuantizationType,
   UnsupportedDynamicShapeCase,
+  FailReadWOFFile,
+  FailReadCheckpointFile,
+  CmsisNNError,
 };
 
 } // namespace onert_micro

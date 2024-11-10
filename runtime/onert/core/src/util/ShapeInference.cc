@@ -185,7 +185,6 @@ ir::Shape inferReduceShape(const ir::Shape &input_shape, const std::vector<int> 
   else
   {
     // Calculates size of reducing axis.
-    int num_reduce_axis = num_axis;
     for (int i = 0; i < num_axis; ++i)
     {
       int current = axes[i];
@@ -204,14 +203,12 @@ ir::Shape inferReduceShape(const ir::Shape &input_shape, const std::vector<int> 
         }
         if (current == previous)
         {
-          --num_reduce_axis;
           break;
         }
       }
     }
     // Determines output dimensions.
     ir::Shape out_shape;
-    int num_skip_axis = 0;
     for (int idx = 0; idx < input_num_dims; ++idx)
     {
       bool is_axis = false;
@@ -219,7 +216,6 @@ ir::Shape inferReduceShape(const ir::Shape &input_shape, const std::vector<int> 
       {
         if (axes[axis_idx] == idx || axes[axis_idx] + input_num_dims == idx)
         {
-          ++num_skip_axis;
           is_axis = true;
           break;
         }
@@ -327,42 +323,40 @@ ir::Shape inferConcatShape(const Shapes &in_shapes, const ir::operation::Concat:
 }
 
 ir::Shape inferConv2DShape(const ir::Shape &in_shape, const ir::Shape &ker_shape,
-                           const ir::operation::Conv2D::Param &param, ir::Layout layout)
+                           const ir::operation::Conv2D::Param &param)
 {
   if (param.stride.horizontal == 0 || param.stride.vertical == 0)
     throw std::runtime_error{"Conv2D: stride values must be positive"};
 
-  auto ifm_shape = in_shape.asFeature(layout);
+  auto ifm_shape = in_shape.asFeature();
 
   // Kernel format is [depth_out, kernel_height, kernel_width, depth_in]
-  auto kf_shape = ker_shape.asFeature(layout);
+  auto kf_shape = ker_shape.asFeature();
   assert(ifm_shape.C == kf_shape.C);
 
-  const auto out_h_w = calcConvLikeHeightAndWidth(ifm_shape.H, ifm_shape.W, kf_shape.H, kf_shape.W,
-                                                  param.padding, param.stride, param.dilation);
+  const auto [out_h, out_w] = calcConvLikeHeightAndWidth(
+    ifm_shape.H, ifm_shape.W, kf_shape.H, kf_shape.W, param.padding, param.stride, param.dilation);
 
-  return ir::Shape{ifm_shape.N, out_h_w.first, out_h_w.second, kf_shape.N};
+  return ir::Shape{ifm_shape.N, out_h, out_w, kf_shape.N};
 }
 
 ir::Shape inferDepthwiseConv2DShape(const ir::Shape &in_shape, const ir::Shape &ker_shape,
-                                    const ir::operation::DepthwiseConv2D::Param &param,
-                                    ir::Layout layout)
+                                    const ir::operation::DepthwiseConv2D::Param &param)
 {
   if (param.stride.horizontal == 0 || param.stride.vertical == 0)
     throw std::runtime_error{"DepthwiseConv2D: stride values must be positive"};
 
-  assert(layout == ir::Layout::NHWC);
-  auto ifm_shape = in_shape.asFeature(layout);
+  auto ifm_shape = in_shape.asFeature();
 
   // Kernel format is [1, kernel_height, kernel_width, depth_out]
-  auto kf_shape = ker_shape.asFeature(layout);
+  auto kf_shape = ker_shape.asFeature();
   assert(kf_shape.C == static_cast<int32_t>(ifm_shape.C * param.multiplier));
   assert(kf_shape.N == 1);
 
-  const auto out_h_w = calcConvLikeHeightAndWidth(ifm_shape.H, ifm_shape.W, kf_shape.H, kf_shape.W,
-                                                  param.padding, param.stride, param.dilation);
+  const auto [out_h, out_w] = calcConvLikeHeightAndWidth(
+    ifm_shape.H, ifm_shape.W, kf_shape.H, kf_shape.W, param.padding, param.stride, param.dilation);
 
-  return ir::Shape{ifm_shape.N, out_h_w.first, out_h_w.second, kf_shape.C};
+  return ir::Shape{ifm_shape.N, out_h, out_w, kf_shape.C};
 }
 
 ir::Shape inferExpandDimsShape(const ir::Shape &in_shape, int32_t axis)
@@ -550,18 +544,16 @@ ir::Shape inferPadShape(const ir::Shape &in_shape, const int32_t *pad_buf, const
   return ret;
 }
 
-ir::Shape inferPoolShape(const ir::Shape &in_shape, const ir::operation::Pool2D::Param &param,
-                         const ir::Layout layout)
+ir::Shape inferPoolShape(const ir::Shape &in_shape, const ir::operation::Pool2D::Param &param)
 {
   if (param.stride.horizontal == 0 || param.stride.vertical == 0)
     throw std::runtime_error{"Pool2D: stride values must be positive"};
 
-  assert(layout == ir::Layout::NHWC);
-  auto ifm_shape = in_shape.asFeature(layout);
-  const auto out_h_w = calcConvLikeHeightAndWidth(ifm_shape.H, ifm_shape.W, param.kh, param.kw,
-                                                  param.padding, param.stride);
+  auto ifm_shape = in_shape.asFeature();
+  const auto [out_h, out_w] = calcConvLikeHeightAndWidth(ifm_shape.H, ifm_shape.W, param.kh,
+                                                         param.kw, param.padding, param.stride);
   // Pooling don't change number of channels and batch size
-  return ir::Shape{ifm_shape.N, out_h_w.first, out_h_w.second, ifm_shape.C};
+  return ir::Shape{ifm_shape.N, out_h, out_w, ifm_shape.C};
 }
 
 ir::Shape inferResizeBilinearShape(const ir::Shape &in_shape, const int32_t output_height,
@@ -604,11 +596,12 @@ template <typename T> ir::Shape inferRangeShape(T start_val, T limit_val, T delt
 template ir::Shape inferRangeShape(int start_val, int limit_val, int delta_val);
 template ir::Shape inferRangeShape(float start_val, float limit_val, float delta_val);
 
-ir::Shape inferReshapeShape(const int32_t *shape_buf, const int32_t shape_num_elements,
-                            const size_t total_num_elements)
+ir::Shape inferReshapeShape(const ir::Shape &input_shape, const int32_t *shape_buf,
+                            const int32_t shape_num_elements)
 {
   ir::Shape ret(shape_num_elements);
   int32_t flatten_dim = ir::Shape::kUnspecifiedDim;
+  auto total_num_elements = input_shape.num_elements();
   for (int32_t i = 0; i < shape_num_elements; ++i)
   {
     if (shape_buf[i] < 0)
@@ -628,7 +621,15 @@ ir::Shape inferReshapeShape(const int32_t *shape_buf, const int32_t shape_num_el
 
   // Check reshapable
   if (total_num_elements != static_cast<size_t>(ret.num_elements()))
-    throw std::runtime_error("Reshape: 2nd param is not compatible with the shape of input");
+  {
+    // Multi batch case
+    // TODO Handle multi batch case more precisely on runtime level
+    if ((ret.dim(0) == 1) &&
+        (total_num_elements == static_cast<size_t>(ret.num_elements() * input_shape.dim(0))))
+      ret.dim(0) = input_shape.dim(0);
+    else
+      throw std::runtime_error("Reshape: 2nd param is not compatible with the shape of input");
+  }
 
   return ret;
 }

@@ -21,8 +21,8 @@
 using namespace onert_micro::execute;
 using namespace onert_micro;
 
-OMStatus OMKernelExecute::executeKernel(OMExecuteArgs &execute_args,
-                                        core::memory::OMRuntimeAllocator &allocator)
+OMStatus OMKernelExecute::runForward(OMExecuteArgs &execute_args,
+                                     core::memory::OMRuntimeAllocator &allocator)
 {
   OMStatus status = Ok;
 
@@ -81,7 +81,11 @@ OMStatus OMKernelExecute::executeKernel(OMExecuteArgs &execute_args,
     if (status != Ok)
       return status;
 
+#ifdef OM_MEMORY_ESTIMATE
+    status = allocator.deallocate(i, &storage, &context);
+#else
     status = allocator.deallocate(i, &storage);
+#endif // OM_MEMORY_ESTIMATE
   }
 
   return status;

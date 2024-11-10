@@ -20,11 +20,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <boost/program_options.hpp>
+
+#include <arser/arser.h>
 
 #include "types.h"
-
-namespace po = boost::program_options;
 
 namespace onert_run
 {
@@ -58,7 +57,10 @@ public:
   const std::string &getDumpRawInputFilename(void) const { return _dump_raw_input_filename; }
   const std::string &getLoadRawFilename(void) const { return _load_raw_filename; }
   const int getNumRuns(void) const { return _num_runs; }
+  const bool getFixedInput(void) const { return _fixed_input; }
+  const bool getForceFloat(void) const { return _force_float; }
   const int getWarmupRuns(void) const { return _warmup_runs; }
+  const int getMinmaxRuns(void) const { return _minmax_runs; }
   const int getRunDelay(void) const { return _run_delay; }
   std::unordered_map<uint32_t, uint32_t> getOutputSizes(void) const { return _output_sizes; }
   const bool getGpuMemoryPoll(void) const { return _gpumem_poll; }
@@ -67,6 +69,7 @@ public:
   const bool printVersion(void) const { return _print_version; }
   TensorShapeMap &getShapeMapForPrepare() { return _shape_prepare; }
   TensorShapeMap &getShapeMapForRun() { return _shape_run; }
+  TensorShapeMap &getOutputShapeMap() { return _output_shape; }
   /// @brief Return true if "--shape_run" or "--shape_prepare" is provided
   bool shapeParamProvided();
   const int getVerboseLevel(void) const { return _verbose_level; }
@@ -80,8 +83,7 @@ private:
   void Parse(const int argc, char **argv);
 
 private:
-  po::positional_options_description _positional;
-  po::options_description _options;
+  arser::Arser _arser;
 
   std::string _package_filename;
   std::string _model_filename;
@@ -95,8 +97,12 @@ private:
   std::string _load_raw_filename;
   TensorShapeMap _shape_prepare;
   TensorShapeMap _shape_run;
+  TensorShapeMap _output_shape;
   int _num_runs;
+  bool _fixed_input = false;
+  bool _force_float = false;
   int _warmup_runs;
+  int _minmax_runs;
   int _run_delay;
   std::unordered_map<uint32_t, uint32_t> _output_sizes;
   bool _gpumem_poll;

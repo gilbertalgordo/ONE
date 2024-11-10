@@ -105,10 +105,12 @@ std::ostream &operator<<(std::ostream &os, const nnfw_loss_info &loss_info)
 
 std::ostream &operator<<(std::ostream &os, const nnfw_train_info &info)
 {
-  os << "- learning_rate   = " << info.learning_rate << "\n";
-  os << "- batch_size      = " << info.batch_size << "\n";
-  os << "- loss_info       = " << info.loss_info << "\n";
-  os << "- optimizer       = " << info.opt << "\n";
+  os << "- learning_rate        = " << info.learning_rate << "\n";
+  os << "- batch_size           = " << info.batch_size << "\n";
+  os << "- loss_info            = " << info.loss_info << "\n";
+  os << "- optimizer            = " << info.opt << "\n";
+  os << "- num_of_trainable_ops = " << info.num_of_trainable_ops << "\n";
+
   return os;
 }
 

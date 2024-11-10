@@ -29,6 +29,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include <cstring>
 
@@ -252,7 +253,16 @@ public:
 
   Argument &help(std::string help_message)
   {
-    _help_message = help_message;
+    _help_message.emplace_back(help_message);
+    return *this;
+  }
+
+  Argument &help(std::initializer_list<std::string> help_messages)
+  {
+    if (help_messages.size() == 0)
+      throw std::runtime_error("Empty help message list");
+
+    _help_message = help_messages;
     return *this;
   }
 
@@ -304,7 +314,7 @@ private:
   std::string _short_name;
   std::vector<std::string> _names;
   std::string _type = "string";
-  std::string _help_message;
+  std::vector<std::string> _help_message;
   std::function<void(void)> _func;
   uint32_t _nargs{1};
   bool _is_required{false};
@@ -600,11 +610,14 @@ public:
         {
           stream.width(length_of_longest_arg);
           stream << std::left << arser::internal::make_comma_concatenated(arg._names) << "\t";
-          for (size_t i = 0; i < arg._help_message.length(); i += message_width)
+          for (size_t i = 0; i < arg._help_message.size(); i++)
           {
-            if (i)
-              stream << std::string(length_of_longest_arg, ' ') << "\t";
-            stream << arg._help_message.substr(i, message_width) << std::endl;
+            for (size_t j = 0; j < arg._help_message[i].length(); j += message_width)
+            {
+              if (i || j)
+                stream << std::string(length_of_longest_arg, ' ') << "\t";
+              stream << arg._help_message[i].substr(j, message_width) << std::endl;
+            }
           }
         }
         std::cout << std::endl;
@@ -638,19 +651,22 @@ template <typename T> T Arser::get_impl(const std::string &arg_name, T *)
     throw std::runtime_error(
       "Type mismatch. "
       "You called get using a type different from the one you specified."
-      "Accumulated argument is returned as std::vector of the specified type");
+      "Accumulated argument is returned as std::vector of the specified type: " +
+      arg_name);
 
   if (arg->second->_type != TypeName<T>::Get())
     throw std::runtime_error("Type mismatch. "
                              "You called get() method with a type different "
                              "from the one you specified. "
                              "Please check the type of what you specified in "
-                             "add_argument() method.");
+                             "add_argument() method: " +
+                             arg_name);
 
   if (arg->second->_values.size() == 0)
     throw std::runtime_error("Wrong access. "
                              "You must make sure that the argument is given before accessing it. "
-                             "You can do it by calling arser[\"argument\"].");
+                             "You can do it by calling arser[\"" +
+                             arg_name + "\"].");
 
   return internal::lexical_cast<T>(arg->second->_values[0]);
 }
@@ -667,8 +683,10 @@ template <typename T> std::vector<T> Arser::get_impl(const std::string &arg_name
   if (arg->second->_is_accumulated)
   {
     if (arg->second->_type != TypeName<T>::Get())
-      throw std::runtime_error("Type mismatch. "
-                               "You called get using a type different from the one you specified.");
+      throw std::runtime_error(
+        "Type mismatch. "
+        "You called get using a type different from the one you specified: " +
+        arg_name);
 
     std::vector<T> data;
     for (auto values : arg->second->_accum_values)
@@ -680,8 +698,10 @@ template <typename T> std::vector<T> Arser::get_impl(const std::string &arg_name
   }
 
   if (arg->second->_type != TypeName<std::vector<T>>::Get())
-    throw std::runtime_error("Type mismatch. "
-                             "You called get using a type different from the one you specified.");
+    throw std::runtime_error(
+      "Type mismatch. "
+      ". You called get using a type different from the one you specified: " +
+      arg_name);
 
   std::vector<T> data;
   std::transform(arg->second->_values.begin(), arg->second->_values.end(), std::back_inserter(data),
@@ -702,13 +722,15 @@ std::vector<std::vector<T>> Arser::get_impl(const std::string &arg_name,
 
   if (not arg->second->_is_accumulated)
     throw std::runtime_error("Type mismatch. "
-                             "You called get using a type different from the one you specified.");
+                             "You called get using a type different from the one you specified: " +
+                             arg_name);
 
   if (arg->second->_type != TypeName<std::vector<T>>::Get())
     throw std::runtime_error(
       "Type mismatch. "
       "You called get using a type different from the one you specified."
-      "Accumulated argument is returned as std::vector of the specified type");
+      "Accumulated argument is returned as std::vector of the specified type: " +
+      arg_name);
 
   std::vector<std::vector<T>> result;
   for (auto values : arg->second->_accum_values)

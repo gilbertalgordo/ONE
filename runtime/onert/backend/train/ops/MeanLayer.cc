@@ -37,12 +37,9 @@ MeanLayer::MeanLayer()
   // DO NOTHING
 }
 
-void MeanLayer::configure(const IPortableTensor *input, const IPortableTensor *axes,
-                          IPortableTensor *output, bool keep_dims, IPortableTensor *back_prop_input,
-                          const IPortableTensor *back_prop_output)
+void MeanLayer::configureBackward(IPortableTensor *back_prop_input,
+                                  const IPortableTensor *back_prop_output)
 {
-  cpu::ops::MeanLayer::configure(input, axes, output, keep_dims);
-
   _back_prop_input = back_prop_input;
   _back_prop_output = back_prop_output;
 }
@@ -52,6 +49,9 @@ void MeanLayer::forward(bool) { cpu::ops::MeanLayer::run(); }
 void MeanLayer::backward()
 {
   nnfw::cker::Shape keep_dim_shape;
+  // If _keep_dims is false, the input rank and the output rank can be different.
+  // MeanGrad does not support other ranking cases. This code corrects the shape
+  // by creating a temporary shape having the same rank as the input.
   if (_keep_dims == false)
   {
     keep_dim_shape.ReplaceWith(getShape(_input));
@@ -63,7 +63,7 @@ void MeanLayer::backward()
   }
   else
   {
-    keep_dim_shape.ReplaceWith(getShape(_back_prop_input));
+    keep_dim_shape.ReplaceWith(getShape(_back_prop_output));
   }
 
   switch (_back_prop_output->data_type())

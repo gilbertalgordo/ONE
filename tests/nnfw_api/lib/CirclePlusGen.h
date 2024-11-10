@@ -38,6 +38,7 @@ public:
     circle::LossFn loss_fn;
     circle::LossReductionType loss_reduction_type;
     int32_t batch_size;
+    int32_t num_of_trainable_ops = -1;
   };
 
 public:

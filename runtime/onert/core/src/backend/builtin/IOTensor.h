@@ -30,64 +30,81 @@ namespace builtin
 /**
  * @brief Tensor object that indirects to the tensor it is pointing to.
  *
- * A model I/O tensor could be two types.
+ * A executor's I/O tensor could be two types.
  *
- * 1. @c UserTensor, if it is the primary graph
- * 2. Any other derivative of @c IPortableTensor from another backend, otherwise
+ * 1. @c UserTensor, if it is the primary graph (package's input/output)
+ * 2. Any other derivative of @c IPortableTensor from another executor, otherwise
  *
  * To support these, this object indirects everything to the actual tensor pointer.
- * Exceptionally if it is UserTensor, this class creates and manages it.
+ *
+ * IOTensor is derived from IPortableTensor, and it also have "_info" field.
+ * "_info" field is accessed by IPortableTensor's getter method.
+ *
+ * It assumes that IOTensor's info is always same with actual tensor's info except shape.
+ * setTensor() updates IOTensor's info's shape to actual tensor shape.
+ * Actual tensor's info should not be updated directly after setTensor() call until
+ * executor's execution is finished, instead it is allowed to update actual tensor's info
+ * indirectly by IOTensor's setter methods.
  */
 class IOTensor : public IPortableTensor
 {
 public:
-  IOTensor(const ir::OperandInfo &info, ir::Layout layout);
+  IOTensor(const ir::OperandInfo &info);
   ~IOTensor();
 
 public:
   void setTensor(IPortableTensor *tensor);
-  void setUserTensor(uint8_t *buffer, size_t size);
-  const ir::OperandInfo &orig_info() const { return _orig_info; }
-  ir::Layout orig_layout() const { return _orig_layout; }
 
 public:
   uint8_t *buffer() const override { return _tensor->buffer(); }
-  size_t total_size() const override { return _tensor->total_size(); }
-  size_t calcOffset(const ir::Coordinates &coords) const override
+  ir::Layout layout() const { return _orig->layout(); }
+  void set_dynamic() override
   {
-    return _tensor->calcOffset(coords);
+    _info.setDynamic();
+    _tensor->set_dynamic();
   }
-  ir::Layout layout() const override { return _tensor->layout(); }
-  ir::DataType data_type() const override { return _tensor->data_type(); }
-  bool is_dynamic() const override
-  {
-    return _is_dynamic || _orig_info.isDynamic() || (_tensor && _tensor->is_dynamic());
-  }
-  void set_dynamic() override { _is_dynamic = true; }
-  ir::Shape getShape() const override { return _tensor->getShape(); }
   void setShape(const ir::Shape &shape) override
   {
-    // Workaround for IPortableTensor holds _info as its member
     _info.shape(shape);
     _tensor->setShape(shape);
   }
-  bool is_constant() const override { return _tensor->is_constant(); }
+
+  /*
+   * Changes tensor shape and allocate memory since its shape was changed
+   * perhaps by nnfw_set_input_tensorinfo()
+   *
+   * Cases are:
+   * 1) static operand -> nnfw_set_input_tensorinfo() -> execute() -> execute()
+   *                                                 (a)          (b)
+   *
+   * at (a), operand is static, tensor is static - memory dealloc is not needed
+   *   (DynamicTensorManager cannot dealloc memory allocated by StaticTensorManager)
+   * at (b), operand is static, tensor is dynamic - memory dealloc is needed
+   *
+   * 2) dynamic operand -> nnfw_set_input_tensorinfo() -> execute() -> execute()
+   *                                                  (a)          (b)
+   *
+   * at (a), operand is dynamic, tensor is dynamic - memory dealloc is not needed
+   *                                       since it has not been allocated yet
+   * at (b), operand is dynamic, tensor is dynamic - memory dealloc is needed
+   */
   bool applyShape(const ir::Shape &shape) override
   {
-    // Workaround for IPortableTensor holds _info as its member
-    _info.shape(shape);
-    return _tensor->applyShape(shape);
+    auto return_val = _tensor->applyShape(shape);
+    if (return_val)
+    {
+      _info.shape(shape);
+      _info.setDynamic();
+    }
+    return return_val;
   }
 
-public:
-  void setShapeOfIPortableTensor(const ir::Shape &shape) { _info.shape(shape); }
-
 private:
-  const ir::OperandInfo _orig_info;
-  const ir::Layout _orig_layout;
-  bool _is_dynamic{false};
-  IPortableTensor *_tensor{nullptr};        //< The actual tensor that is indirected
-  std::unique_ptr<UserTensor> _user_tensor; //< If it is a user tensor, it is managed by this object
+  IPortableTensor *_tensor{nullptr}; //< The actual tensor that is indirected
+  // "_orig" has UserTensor type original tensor's info with nullptr buffer and layout,
+  // and "_tensor" points to "_user_tensor".
+  // After 1st setTensor(tensor) call, "_tensor" is updated to actual tensor
+  std::unique_ptr<UserTensor> _orig; //< If it is a user tensor, it is managed by this object
 };
 
 } // namespace builtin

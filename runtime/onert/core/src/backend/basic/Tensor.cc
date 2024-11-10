@@ -28,63 +28,29 @@ namespace basic
 
 Tensor::~Tensor() {}
 
-size_t Tensor::calcOffset(const ir::Coordinates &coords) const
-{
-  auto shape = getShape();
-  size_t rank = shape.rank();
-  rank = rank == 0 ? 1 : rank;
-  size_t offset = 0;
-  for (size_t i = 0; i < rank; ++i)
-  {
-    auto dim = shape.rank() == 0 ? 1 : shape.dim(i);
-    offset = offset * dim + coords[i];
-  }
-  offset *= sizeOfDataType(data_type());
-  return offset;
-}
-
 void Tensor::setShape(const ir::Shape &new_shape) { _info.shape(new_shape); }
 
 bool Tensor::applyShape(const ir::Shape &new_shape)
 {
-  bool previously_dynamic = is_dynamic();
+  if (_buffer != nullptr && new_shape == _info.shape())
+    return true;
 
-  auto allocTensorMem = [&]() {
-    auto capacity = total_size();
+  // Always set shape - when buffer with same or larger size was already allocated, shape could
+  // differ
+  _info.shape(new_shape);
+  set_dynamic();
+  if (_buffer == nullptr || _size < _info.total_size())
+  {
     assert(_dynamic_mem_mgr);
-    auto alloc = _dynamic_mem_mgr->allocate(this, capacity);
-    setBuffer(alloc);
-  };
-
-  if (!previously_dynamic || buffer() == nullptr)
-  {
-    // Always set shape - when buffer with same size was already allocated, shape could differ
-    setShape(new_shape);
-    set_dynamic();
-    allocTensorMem();
-  }
-  else
-  {
-    auto previous_size = total_size();
-    auto new_size = new_shape.num_elements() * ir::sizeOfDataType(data_type());
-    if (previous_size != new_size)
-    {
-      assert(_dynamic_mem_mgr);
+    if (_allocator)
       _dynamic_mem_mgr->deallocate(this);
 
-      setShape(new_shape);
-      set_dynamic();
-      allocTensorMem();
-    }
-    else
-    { // when buffer with same size was already allocated, shape could differ
-      setShape(new_shape);
-    }
+    _size = _info.total_size();
+    setBuffer(_dynamic_mem_mgr->allocate(this, _size));
   }
+
   return true;
 }
-
-ir::Shape Tensor::getShape() const { return _info.shape(); }
 
 void Tensor::deallocBuffer()
 {

@@ -196,10 +196,8 @@ StaticShapeInferer::createStaticShapeInferers(
 {
   // Allocate StaticShapeInferer per each subgraph
   std::unordered_map<ir::SubgraphIndex, std::unique_ptr<StaticShapeInferer>> inferers;
-  for (auto &&pair : lowered_subgs)
+  for (auto &&[subg_index, lowered_subg] : lowered_subgs)
   {
-    const auto &subg_index = pair.first;
-    auto &lowered_subg = pair.second;
     inferers[subg_index] = std::make_unique<StaticShapeInferer>(lowered_subg);
   }
 
@@ -853,8 +851,6 @@ void StaticShapeInferer::visit(const ir::operation::Pool2D &op)
 {
   auto &operands = _lowered_subg->graph().operands();
 
-  const auto layout = _lowered_subg->graph().layout();
-
   const auto input_idx{op.getInputs().at(ir::operation::Pool2D::Input::INPUT)};
   const auto &input = operands.at(input_idx);
   if (input.info().shape().rank() != 4)
@@ -865,7 +861,7 @@ void StaticShapeInferer::visit(const ir::operation::Pool2D &op)
   const auto output_idx = op.getOutputs().at(0);
   ir::Operand &output = operands.at(output_idx);
 
-  ir::Shape new_shape = shape_inference::inferPoolShape(input.info().shape(), op.param(), layout);
+  ir::Shape new_shape = shape_inference::inferPoolShape(input.info().shape(), op.param());
   output.info().shape(new_shape);
 }
 
@@ -978,8 +974,8 @@ void StaticShapeInferer::visit(const ir::operation::Reshape &op)
       const auto *shape_buf = reinterpret_cast<const int32_t *>(shape.data()->base());
       assert(shape_buf);
 
-      ir::Shape new_shape = shape_inference::inferReshapeShape(
-        shape_buf, shape.shape().num_elements(), input.shape().num_elements());
+      ir::Shape new_shape =
+        shape_inference::inferReshapeShape(input.shape(), shape_buf, shape.shape().num_elements());
 
       // if shape is from Const, TFLC put the shape of output into tensor
       if (new_shape != output.shape())
@@ -1000,7 +996,7 @@ void StaticShapeInferer::visit(const ir::operation::Reshape &op)
     // Let's check the new_shape option
     auto shape = op.param().new_shape;
     ir::Shape new_shape =
-      shape_inference::inferReshapeShape(shape.data(), shape.size(), input.shape().num_elements());
+      shape_inference::inferReshapeShape(input.shape(), shape.data(), shape.size());
 
     if (new_shape != output.shape())
     {

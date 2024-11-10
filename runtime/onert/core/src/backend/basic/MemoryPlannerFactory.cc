@@ -31,7 +31,7 @@ MemoryPlannerFactory &MemoryPlannerFactory::get()
   return instance;
 }
 
-IMemoryPlanner *MemoryPlannerFactory::create(const std::string &key)
+IMemoryPlanner<ir::OperandIndex> *MemoryPlannerFactory::create(const std::string &key)
 {
   if (key == "FirstFit")
   {

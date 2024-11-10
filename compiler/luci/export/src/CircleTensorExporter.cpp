@@ -16,6 +16,8 @@
 
 #include "CircleTensorExporter.h"
 
+#include "CircleExporterUtils.h"
+
 #include <luci/IR/CircleNodes.h>
 #include <luci/IR/CircleNodeVisitor.h>
 #include <luci/Service/CircleTypeInference.h>
@@ -338,14 +340,15 @@ flatbuffers::Offset<circle::Buffer> encodeOpBuffer(FlatBufferBuilder &builder)
 }
 
 template <typename NodeT>
-flatbuffers::Offset<circle::Buffer> encodeOpBuffer(FlatBufferBuilder &builder, NodeT *)
+flatbuffers::Offset<circle::Buffer> encodeOpBuffer(FlatBufferBuilder &builder,
+                                                   SerializedModelData &, NodeT *)
 {
   return CreateBuffer(builder);
 }
 
 template <loco::DataType DT>
-flatbuffers::Offset<circle::Buffer> encodeOpBufferByDType(FlatBufferBuilder &builder,
-                                                          luci::CircleConst *c)
+flatbuffers::Offset<circle::Buffer>
+encodeOpBufferByDType(FlatBufferBuilder &builder, SerializedModelData &md, luci::CircleConst *c)
 {
   using NativeType = typename loco::DataTypeImpl<DT>::Type;
 
@@ -357,61 +360,34 @@ flatbuffers::Offset<circle::Buffer> encodeOpBufferByDType(FlatBufferBuilder &bui
     raw_data.push_back(c->at<DT>(i));
   }
   const size_t raw_size = size * sizeof(NativeType);
+
+  if (md._ext_buffer)
+  {
+    // TODO optimize this if this operation takes long or much memory
+    SerializedModelData::BufferData buffer_data;
+    buffer_data.resize(raw_size);
+    std::memcpy(buffer_data.data(), raw_data.data(), raw_size);
+
+    int32_t buffer_index = md._buffers.size();
+    md._buffer_data_map.emplace(buffer_index, buffer_data);
+
+    // create fake indicator buffer
+    return circle::CreateBuffer(builder, 0 /* data */, 1 /* offset */, 1 /* size */);
+  }
+  if (check_size_limit(builder, raw_size))
+  {
+    md._require_ext_buffer = true;
+    return md._empty_buffer;
+  }
+
   auto array_offset = builder.CreateVector(reinterpret_cast<uint8_t *>(raw_data.data()), raw_size);
   return CreateBuffer(builder, array_offset);
 }
 
 template <>
 flatbuffers::Offset<circle::Buffer>
-encodeOpBufferByDType<loco::DataType::S4>(FlatBufferBuilder &builder, luci::CircleConst *c)
-{
-  const uint32_t size = c->size<loco::DataType::S4>();
-  const uint32_t raw_size = (size + 1) / 2;
-  std::vector<uint8_t> raw_data(raw_size);
-
-  for (uint32_t i = 0; i < raw_size; ++i)
-  {
-    uint32_t sidx = i * 2;
-    uint8_t data = static_cast<uint8_t>(c->at<loco::DataType::S4>(sidx++));
-    raw_data[i] = data & 0x0f;
-    if (sidx < size)
-    {
-      data = static_cast<uint8_t>(c->at<loco::DataType::S4>(sidx));
-      raw_data[i] |= data << 4;
-    }
-  }
-
-  auto array_offset = builder.CreateVector(raw_data.data(), raw_size);
-  return CreateBuffer(builder, array_offset);
-}
-
-template <>
-flatbuffers::Offset<circle::Buffer>
-encodeOpBufferByDType<loco::DataType::U4>(FlatBufferBuilder &builder, luci::CircleConst *c)
-{
-  const uint32_t size = c->size<loco::DataType::U4>();
-  const uint32_t raw_size = (size + 1) / 2;
-  std::vector<uint8_t> raw_data(raw_size);
-
-  for (uint32_t i = 0; i < raw_size; ++i)
-  {
-    uint32_t sidx = i * 2;
-    uint8_t data = static_cast<uint8_t>(c->at<loco::DataType::U4>(sidx++));
-    raw_data[i] = data & 0x0f;
-    if (sidx < size)
-    {
-      data = static_cast<uint8_t>(c->at<loco::DataType::U4>(sidx));
-      raw_data[i] |= data << 4;
-    }
-  }
-
-  auto array_offset = builder.CreateVector(raw_data.data(), raw_size);
-  return CreateBuffer(builder, array_offset);
-}
-
-template <>
-flatbuffers::Offset<circle::Buffer>
-encodeOpBufferByDType<loco::DataType::STRING>(FlatBufferBuilder &builder, luci::CircleConst *c)
+encodeOpBufferByDType<loco::DataType::STRING>(FlatBufferBuilder &builder, SerializedModelData &,
+                                              luci::CircleConst *c)
 {
   const uint32_t count = c->size<loco::DataType::STRING>();
   uint32_t raw_size = sizeof(int32_t) * (count + 2);
@@ -457,31 +433,57 @@ encodeOpBufferByDType<loco::DataType::STRING>(FlatBufferBuilder &builder, luci::
   return CreateBuffer(builder, array_offset);
 }
 
+template <loco::DataType DT>
+flatbuffers::Offset<circle::Buffer>
+encodeOpBufferPack4bit(FlatBufferBuilder &builder, SerializedModelData &, luci::CircleConst *c)
+{
+  const uint32_t size = c->size<DT>();
+  const uint32_t raw_size = (size + 1) / 2;
+  std::vector<uint8_t> raw_data(raw_size);
+
+  for (uint32_t i = 0; i < raw_size; ++i)
+  {
+    uint32_t sidx = i * 2;
+    uint8_t data = static_cast<uint8_t>(c->at<DT>(sidx));
+    raw_data[i] = data & 0x0f;
+    sidx++;
+    if (sidx < size)
+    {
+      data = static_cast<uint8_t>(c->at<DT>(sidx));
+      raw_data[i] |= data << 4;
+    }
+  }
+
+  auto array_offset = builder.CreateVector(raw_data.data(), raw_size);
+  return CreateBuffer(builder, array_offset);
+}
+
 template <>
-flatbuffers::Offset<circle::Buffer> encodeOpBuffer(FlatBufferBuilder &builder, luci::CircleConst *c)
+flatbuffers::Offset<circle::Buffer> encodeOpBuffer(FlatBufferBuilder &builder,
+                                                   SerializedModelData &md, luci::CircleConst *c)
 {
   switch (c->dtype())
   {
     case loco::DataType::FLOAT32:
-      return encodeOpBufferByDType<loco::DataType::FLOAT32>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::FLOAT32>(builder, md, c);
     case loco::DataType::S4:
-      return encodeOpBufferByDType<loco::DataType::S4>(builder, c);
+      return encodeOpBufferPack4bit<loco::DataType::S4>(builder, md, c);
     case loco::DataType::S8:
-      return encodeOpBufferByDType<loco::DataType::S8>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::S8>(builder, md, c);
     case loco::DataType::S16:
-      return encodeOpBufferByDType<loco::DataType::S16>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::S16>(builder, md, c);
     case loco::DataType::S32:
-      return encodeOpBufferByDType<loco::DataType::S32>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::S32>(builder, md, c);
     case loco::DataType::S64:
-      return encodeOpBufferByDType<loco::DataType::S64>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::S64>(builder, md, c);
     case loco::DataType::U4:
-      return encodeOpBufferByDType<loco::DataType::U4>(builder, c);
+      return encodeOpBufferPack4bit<loco::DataType::U4>(builder, md, c);
     case loco::DataType::U8:
-      return encodeOpBufferByDType<loco::DataType::U8>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::U8>(builder, md, c);
     case loco::DataType::BOOL:
-      return encodeOpBufferByDType<loco::DataType::BOOL>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::BOOL>(builder, md, c);
     case loco::DataType::STRING:
-      return encodeOpBufferByDType<loco::DataType::STRING>(builder, c);
+      return encodeOpBufferByDType<loco::DataType::STRING>(builder, md, c);
     default:
       break;
   }
@@ -529,7 +531,7 @@ encodeSparsityParameters(FlatBufferBuilder &builder, luci::SparsityParam *sparsi
 
   std::vector<flatbuffers::Offset<circle::DimensionMetadata>> dim_metadata_vec;
   auto luci_dim_metadata = sparsityparam->dim_metadata;
-  for (auto it : luci_dim_metadata)
+  for (const auto &it : luci_dim_metadata)
   {
     // array_segments
     auto circle_array_segments = to_circle_sparse_index_vector(builder, it.array_segments());
@@ -621,7 +623,7 @@ uint32_t get_buffer_id(FlatBufferBuilder &builder, SerializedModelData &md, luci
     }
 
     // When buffer with same values is not found, generate new buffer
-    auto buffer = encodeOpBuffer(builder, node);
+    auto buffer = encodeOpBuffer(builder, md, node);
 
     auto buffer_id = static_cast<uint32_t>(md._buffers.size());
     md._buffers.push_back(buffer);
@@ -678,14 +680,16 @@ namespace luci
 
 void prepareModelData(FlatBufferBuilder &builder, SerializedModelData &md)
 {
+  md.clear();
+
   // add one empty buffer
   //   note: this follows TFLite
   //   note: there's a comment in tflite fbs file
   //   - Note the 0th entry of this array must be an empty buffer (sentinel).
   //   - This is a convention so that tensors without a buffer can provide 0 as
   //   - their buffer.
-  auto buffer = encodeOpBuffer(builder);
-  md._buffers.push_back(buffer);
+  md._empty_buffer = encodeOpBuffer(builder);
+  md._buffers.push_back(md._empty_buffer);
 }
 
 void exportOpDefinedTensors(loco::Graph *g, FlatBufferBuilder &builder, SerializedModelData &md,
@@ -714,6 +718,16 @@ void exportOpDefinedTensors(loco::Graph *g, FlatBufferBuilder &builder, Serializ
   for (const auto &tensor_info : tensor_ctx)
   {
     exportOpDefinedTensor(tensor_info, builder, md, gd);
+  }
+}
+
+void clearExportInfo(loco::Graph *g)
+{
+  auto nodes = g->nodes();
+  for (uint32_t n = 0; n < nodes->size(); ++n)
+  {
+    auto node = loco::must_cast<luci::CircleNode *>(nodes->at(n));
+    clear_tensor_index(node);
   }
 }
 

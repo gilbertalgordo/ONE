@@ -16,8 +16,7 @@
 
 #include "ExecutorBase.h"
 
-#include "ShapeConverter.h"
-
+#include "util/ConfigSource.h"
 #include <misc/polymorphic_downcast.h>
 
 namespace onert
@@ -47,38 +46,24 @@ ExecutorBase::ExecutorBase(std::unique_ptr<compiler::LoweredGraph> &&lowered_gra
 }
 
 void ExecutorBase::execute(const std::vector<backend::IPortableTensor *> &inputs,
-                           const std::vector<backend::IPortableTensor *> &outputs)
+                           const std::vector<backend::IPortableTensor *> &outputs,
+                           const ExecutionOptions &options)
 {
   // For thread-safe, use mutex
   // TODO: if all used backends on this executor are thread-safe,
   //       do not need to use mutex (otherwise, use mutex)
   // Deadlock occurs when an Executor is called recursively.
   std::lock_guard<std::mutex> lock(_mutex);
+  _current_options = options;
 
   assert(inputs.size() == _graph.getInputs().size());
   assert(inputs.size() == _input_tensors.size());
   for (uint32_t n = 0; n < inputs.size(); ++n)
   {
     const auto input = inputs[n];
-    assert(input->buffer() != nullptr);
+    assert(input->buffer() != nullptr || input->get_info().total_size() == 0);
     auto input_tensor = _input_tensors[n];
     assert(input_tensor != nullptr);
-    if (input != nullptr)
-    {
-      const auto &orig_input_shape = input_tensor->orig_info().shape();
-      const auto &changed_input_shape =
-        convertShape(input->getShape(), input->layout(), input_tensor->orig_layout());
-      if (input_tensor->get_info().shape() != changed_input_shape)
-      {
-        // TODO Fix this workaround that is introduced since cpu based kernels directly use `_info`
-        // rather than interface methods to avoid virtual function calls.
-        input_tensor->setShapeOfIPortableTensor(changed_input_shape);
-      }
-      if (orig_input_shape != changed_input_shape)
-      {
-        input_tensor->set_dynamic();
-      }
-    }
     input_tensor->setTensor(input);
   }
 
@@ -87,90 +72,16 @@ void ExecutorBase::execute(const std::vector<backend::IPortableTensor *> &inputs
   for (uint32_t n = 0; n < outputs.size(); ++n)
   {
     const auto output = outputs[n];
-    // assert(dst_tensor->buffer() != nullptr);
+    assert(output->buffer() != nullptr || output->get_info().total_size() == 0);
     auto output_tensor = _output_tensors[n];
     assert(output_tensor != nullptr);
     output_tensor->setTensor(output);
   }
 
-  executeImpl();
-}
+  // Create observee
+  ExecutionObservee subject(_observers, options);
 
-void ExecutorBase::execute(const IODescription &desc)
-{
-  // For thread-safe, use mutex
-  // TODO: if all used backends on this executor are thread-safe,
-  //       do not need to use mutex (otherwise, use mutex)
-  std::lock_guard<std::mutex> lock(_mutex);
-
-  // Set input(s)
-  assert(_input_tensors.size() == desc.inputs.size());
-  for (uint32_t i = 0; i < _input_tensors.size(); ++i)
-  {
-    auto tensor = _input_tensors[i];
-
-    // TODO Check if (desc.inputs[i] == nullptr)
-    // TODO Better design for ITensor? (we need const_cast as ITensor is writable)
-    tensor->setUserTensor(static_cast<uint8_t *>(const_cast<void *>(desc.inputs[i]->buffer)),
-                          desc.inputs[i]->size);
-
-    auto input_shape = desc.dynamic_input_shapes.find(ir::IOIndex{i});
-    if (input_shape != desc.dynamic_input_shapes.end())
-    {
-      tensor->set_dynamic();
-      tensor->setShape(input_shape->second);
-      /*
-       * Changes tensor shape and allocate memory since its shape was changed
-       * perhaps by nnfw_set_input_tensorinfo()
-       *
-       * Cases are:
-       * 1) static operand -> nnfw_set_input_tensorinfo() -> execute() -> execute()
-       *                                                 (a)          (b)
-       *
-       * at (a), operand is static, tensor is static - memory dealloc is not needed
-       *   (DynamicTensorManager cannot dealloc memory allocated by StaticTensorManager)
-       * at (b), operand is static, tensor is dynamic - memory dealloc is needed
-       *
-       * 2) dynamic operand -> nnfw_set_input_tensorinfo() -> execute() -> execute()
-       *                                                  (a)          (b)
-       *
-       * at (a), operand is dynamic, tensor is dynamic - memory dealloc is not needed
-       *                                       since it has not been allocated yet
-       * at (b), operand is dynamic, tensor is dynamic - memory dealloc is needed
-       */
-      tensor->applyShape(input_shape->second);
-    }
-  }
-
-  assert(_output_tensors.size() == desc.outputs.size());
-  for (uint32_t i = 0; i < _output_tensors.size(); ++i)
-  {
-    auto tensor = _output_tensors[i];
-
-    if (desc.outputs[i] == nullptr)
-      throw std::runtime_error{"Output " + std::to_string(i) + "'s buffer is not set."};
-    tensor->setUserTensor(static_cast<uint8_t *>(desc.outputs[i]->buffer), desc.outputs[i]->size);
-    tensor->set_dynamic(); // It can't be resized but shape could change
-  }
-
-  executeImpl();
-
-  // Update output(s) desc
-  for (uint32_t n = 0; n < _graph.getOutputs().size(); ++n)
-  {
-    ir::IOIndex output_index{n};
-    // Optional output
-    if (desc.outputs.at(n) == nullptr)
-    {
-      continue;
-    }
-    auto &output = *desc.outputs.at(n);
-
-    // set shape of outputDesc to tensor shape since tensor can be dynamic
-    const auto output_tensor_shape = _output_tensors[n]->getShape();
-    output.info.shape(
-      convertShape(output_tensor_shape, _output_tensors[n]->layout(), output.layout));
-  }
+  executeImpl(subject);
 }
 
 bool ExecutorBase::hasDynamicInput()

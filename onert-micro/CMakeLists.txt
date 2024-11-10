@@ -6,8 +6,46 @@ set(ARM_OBJCOPY "arm-none-eabi-objcopy")
 find_program(ARM_C_COMPILER_PATH ${ARM_C_COMPILER})
 
 if (NOT ARM_C_COMPILER_PATH)
-    message(STATUS "Build luci-micro: FALSE(ARM compiler is NOT FOUND)")
+    message(STATUS "Build onert-micro failed: ARM compiler is NOT FOUND")
 endif ()
+
+set(OM_CIRCLE_SCHEMA onert_micro_circle_schema)
+set(OM_TRAININFO_SCHEMA onert_micro_traininfo_schema)
+
+
+# Generate git_version.h
+set(OM_GIT_VERSION_FILENAME "git_version.h")
+set(OM_GIT_VERSION_TEMPLATE_FILENAME "git_version.h.in")
+
+# Add command to generate git version header
+add_custom_command(
+        OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/gen/${OM_GIT_VERSION_FILENAME}
+        ALL
+        COMMAND
+        ${CMAKE_COMMAND}
+        -D IN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/${OM_GIT_VERSION_TEMPLATE_FILENAME}
+        -D OUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/gen/${OM_GIT_VERSION_FILENAME}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckGit.cmake
+        WORKING_DIRECTORY
+        ${CMAKE_SOURCE_DIR}
+)
+
+file(WRITE ${CMAKE_BINARY_DIR}/${OM_GIT_VERSION_FILENAME})
+
+add_custom_target(
+        generate_version_header
+        ALL
+        COMMAND
+        ${CMAKE_COMMAND}
+        -D IN_FILE=${CMAKE_CURRENT_SOURCE_DIR}/${OM_GIT_VERSION_TEMPLATE_FILENAME}
+        -D OUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/gen/${OM_GIT_VERSION_FILENAME}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckGit.cmake
+        WORKING_DIRECTORY
+        ${CMAKE_SOURCE_DIR}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gen/${OM_GIT_VERSION_FILENAME}
+)
+
 
 if (NOT_BUILD_EXTERNALS)
     message(STATUS "USE LOCAL EXTERNAL")
@@ -15,23 +53,29 @@ if (NOT_BUILD_EXTERNALS)
     set(ONERT_MICRO_EXTERNAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/externals")
     set(Flatbuffers_DIR "${ONERT_MICRO_EXTERNAL_DIR}")
     set(FlatBuffersSource_DIR "${Flatbuffers_DIR}")
-    set (EXT_OVERLAY_DIR "${ONERT_MICRO_EXTERNAL_DIR}")
+    set(EXT_OVERLAY_DIR "${ONERT_MICRO_EXTERNAL_DIR}")
     set(GENERATED_INCLUDE_DIR "${ONERT_MICRO_EXTERNAL_DIR}/gen")
 
     add_subdirectory(externals)
-else()
+else ()
     message(STATUS "DOWNLOAD AND BUILD EXTERNALS")
 
-    nnas_find_package(FlatBuffers EXACT 2.0 QUIET)
+    nnas_find_package(FlatBuffers EXACT 23.5.26 QUIET)
 
     if (NOT FlatBuffers_FOUND)
-        message(STATUS "Build luci-micro: FALSE(FlatBuffers 2.0 NOT FOUND)")
+        message(STATUS "Build onert-micro failed: FlatBuffers 23.5.26 NOT FOUND")
         return()
     endif (NOT FlatBuffers_FOUND)
 
-    message(STATUS "Build luci-micro: TRUE")
+    message(STATUS "FOUND FlatBuffers")
 
-    set(SCHEMA_FILE "${NNAS_PROJECT_SOURCE_DIR}/res/CircleSchema/0.4/circle_schema.fbs")
+    set(SCHEMA_FILE "${NNAS_PROJECT_SOURCE_DIR}/res/CircleSchema/0.8/circle_schema.fbs")
+
+    # need patch to circle schema 0.8 to resolve SAM issue
+    set(PATCH_FILE ${CMAKE_CURRENT_SOURCE_DIR}/remove_stablehlo_from_cir0.8.patch)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E chdir ${NNAS_PROJECT_SOURCE_DIR} git apply ${PATCH_FILE}
+            WORKING_DIRECTORY "${NNAS_PROJECT_SOURCE_DIR}"
+            )
 
     # NOTE Copy circle_schema.fbs as schema.fbs to generate "schema_generated.fbs" instead of "circle_schema_generated.fbs"
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/schema.fbs"
@@ -40,57 +84,56 @@ else()
             DEPENDS "${SCHEMA_FILE}"
             )
 
-    FlatBuffers_Target(luci_micro_circle_schema
+    FlatBuffers_Target(${OM_CIRCLE_SCHEMA}
             OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen/circle-generated/circle"
             INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen"
             SCHEMA_DIR "${CMAKE_CURRENT_BINARY_DIR}"
             SCHEMA_FILES "schema.fbs"
             )
+
+    set(SCHEMA_FILE "${NNAS_PROJECT_SOURCE_DIR}/runtime/libs/circle-schema/include/circle_traininfo.fbs")
+
+    # NOTE Copy circle_schema.fbs as schema.fbs to generate "schema_generated.fbs" instead of "circle_schema_generated.fbs"
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/traininfo.fbs"
+            COMMAND ${CMAKE_COMMAND} -E copy "${SCHEMA_FILE}" traininfo.fbs
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+            DEPENDS "${SCHEMA_FILE}"
+            )
+
+    FlatBuffers_Target(${OM_TRAININFO_SCHEMA}
+            OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen/circle-generated/circle"
+            INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen"
+            SCHEMA_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+            SCHEMA_FILES "traininfo.fbs"
+            )
+
     set(Flatbuffers_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../overlay/lib/cmake/flatbuffers")
-    set (EXT_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../overlay")
+    set(EXT_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../overlay")
     set(GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen")
-endif()
+endif ()
 
-set(LUCI_INTERPRETER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/include")
-add_subdirectory(luci-interpreter/src/core/reader)
-
-# Choosing Kernel: reference mcu, optimized cmsisnn, optimized linux
+# Choosing Kernel: reference mcu, optimized cmsisnn
 if (NOT KERNELS)
     message(STATUS "KERNEL variable is not defined, default reference mcu kernels will be used")
-    set(LUCI_INTERPRETER_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/pal/mcu")
-elseif("${KERNELS}" STREQUAL "mcu")
+    set(OM_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onert-micro/include/pal/mcu")
+elseif ("${KERNELS}" STREQUAL "mcu")
     message(STATUS "ONERT_MICRO will use reference mcu kernels")
-    set(LUCI_INTERPRETER_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/pal/mcu")
-elseif("${KERNELS}" STREQUAL "cmsisnn")
+    set(OM_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onert-micro/include/pal/mcu")
+elseif ("${KERNELS}" STREQUAL "cmsisnn")
     message(STATUS "ONERT_MICRO will use optimized cmsisnn kernels")
-    set(LUCI_INTERPRETER_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/pal/cmsisnn")
-elseif("${KERNELS}" STREQUAL "linux")
-    message(STATUS "ONERT_MICRO will use optimized linux kernels")
-    set(LUCI_INTERPRETER_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/pal/linux")
-else()
-    message(STATUS "Build onert-micro: FAILED (Non-existent kernel variable. Choose one of the following options: mcu, cmsisnn, linux)")
+    set(OM_PAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onert-micro/include/pal/cmsisnn")
+else ()
+    message(STATUS "Build onert-micro: FAILED (Non-existent kernel variable. Choose one of the following options: mcu, cmsisnn)")
     return()
-endif()
-
-if (USE_STATIC_ALLOC)
-    # TODO: enable it
-    message(STATUS "FAILED ONERT-MICRO is not support Static Memory Manager now")
-    return()
-else()
-    message(STATUS "USE_STATIC_ALLOC variable is not defined, default dynamic memory manager will be used")
-endif()
+endif ()
 
 set(CMAKE_ARM_OPTIONS
-        -DLUCI_INTERPRETER_STATIC=ON
-        -DLUCI_STATIC=ON
-        -DBUILD_CMSIS_NN_FUNCTIONS=ON
         -DTARGET_CPU=${TARGET_CPU}
         -DTARGET_ARCH=${TARGET_ARCH}
         "-DEXT_OVERLAY_DIR=${EXT_OVERLAY_DIR}"
-        "-DFlatbuffers_DIR=${Flatbuffers_DIR}"
         "-DFlatBuffersSource_DIR=${FlatBuffersSource_DIR}"
         "-DCMAKE_TOOLCHAIN_FILE=${NNAS_PROJECT_SOURCE_DIR}/infra/onert-micro/cmake/buildtool/config/arm-none-eabi-gcc.cmake"
-        "-DLUCI_INTERPRETER_PAL_DIR=${LUCI_INTERPRETER_PAL_DIR}"
+        "-DOM_PAL_DIR=${OM_PAL_DIR}"
         "-DNNAS_PROJECT_SOURCE_DIR=${NNAS_PROJECT_SOURCE_DIR}"
         "-DNNAS_EXTERNALS_DIR=${NNAS_EXTERNALS_DIR}"
         -DC_COMPILER=${ARM_C_COMPILER}
@@ -101,18 +144,12 @@ set(CMAKE_ARM_OPTIONS
         -DENABLE_TEST=OFF
         -DBUILD_GTEST=OFF
         "-DNNAS_ROOT=${NNAS_PROJECT_SOURCE_DIR}"
-        -DENABLE_STRICT_BUILD=OFF
         "-DGENERATED_INCLUDE_DIR=${GENERATED_INCLUDE_DIR}"
         )
 
-if (GENERATE_KERNELS_LIST_FROM)
-    set(GENERATED_KERNELS_LIST_PATH "${LUCI_INTERPRETER_PAL_DIR}/GeneratedKernelsToBuild.lst")
-    list(APPEND CMAKE_ARM_OPTIONS "-DLUCI_INTERPRETER_KERNELS_BUILD_LIST=${GENERATED_KERNELS_LIST_PATH}")
-endif ()
-
 if (NOT_BUILD_EXTERNALS)
     list(APPEND CMAKE_ARM_OPTIONS "-DNOT_BUILD_EXTERNALS=ON")
-else()
+else ()
     list(APPEND CMAKE_ARM_OPTIONS "-DNOT_BUILD_EXTERNALS=OFF")
 endif ()
 
@@ -131,17 +168,24 @@ if (DIS_QUANT)
     message(STATUS "ONERT-MICRO will not use part for QUANTIZED models")
     add_definitions(-DDIS_QUANT)
     list(APPEND CMAKE_ARM_OPTIONS "-DDIS_QUANT=ON")
-endif()
+endif ()
 
 if (DIS_FLOAT)
     message(STATUS "ONERT-MICRO will not use part for FLOAT models")
     add_definitions(-DDIS_FLOAT)
     list(APPEND CMAKE_ARM_OPTIONS "-DDIS_FLOAT=ON")
-endif()
+endif ()
 
 if (DIS_DYN_SHAPES)
     message(STATUS "ONERT-MICRO will not use dynamic shapes")
     add_definitions(-DDIS_DYN_SHAPES)
+    list(APPEND CMAKE_ARM_OPTIONS "-DDIS_DYN_SHAPES=ON")
+endif()
+
+if (OM_MEMORY_ESTIMATE)
+    message(STATUS "ONERT-MICRO will use memory estimation")
+    add_definitions(-DOM_MEMORY_ESTIMATE)
+    list(APPEND CMAKE_ARM_OPTIONS "-DOM_MEMORY_ESTIMATE=ON")
 endif()
 
 set(MICRO_ARM_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/standalone_arm")
@@ -157,26 +201,7 @@ add_custom_command(
         VERBATIM
 )
 
-add_custom_target(luci_interpreter_micro_arm_cmake DEPENDS "${MICRO_ARM_BUILD_DEPENDENCY}")
-
-# Generate KernelsToBuild list from circle model
-if (GENERATE_KERNELS_LIST_FROM)
-    add_executable(generator_kernels_list_exec helpers/GenerateKernelsListHelper.cpp)
-
-    target_link_libraries(generator_kernels_list_exec luci_micro_circle_reader)
-    target_link_libraries(generator_kernels_list_exec luci_micro_circle_schema)
-
-    target_include_directories(generator_kernels_list_exec PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/luci-interpreter/include")
-
-    add_custom_target(
-            generate_kernels_list ALL
-            COMMAND generator_kernels_list_exec ${GENERATE_KERNELS_LIST_FROM} ${GENERATED_KERNELS_LIST_PATH}
-            COMMENT "Generating KernelsToBuild list"
-    )
-    add_dependencies(generate_kernels_list luci_micro_circle_reader)
-    add_dependencies(luci_interpreter_micro_arm_cmake generate_kernels_list)
-
-endif ()
+add_custom_target(onert_micro_arm_cmake DEPENDS "${MICRO_ARM_BUILD_DEPENDENCY}")
 
 # To remove GENERATE_KERNELS_LIST_FROM and KERNELS variable from cmake cache
 unset(GENERATE_KERNELS_LIST_FROM CACHE)
@@ -184,22 +209,24 @@ unset(KERNELS CACHE)
 unset(USE_STATIC_KERNEL CACHE)
 unset(DIS_QUANT CACHE)
 unset(DIS_FLOAT CACHE)
+unset(OM_MEMORY_ESTIMATE CACHE)
 unset(ENABLE_ONERT_MICRO_TEST CACHE)
 unset(NOT_BUILD_EXTERNALS CACHE)
 
-set(MICRO_ARM_BINARY "${MICRO_ARM_BUILD_DIR}/luci-interpreter/src/libluci_interpreter_micro.a")
+set(MICRO_ARM_BINARY "${MICRO_ARM_BUILD_DIR}/onert_micro/src/libonert_micro_dev.a")
 
 add_custom_command(
         OUTPUT "${MICRO_ARM_BINARY}"
-        COMMAND "${CMAKE_MAKE_PROGRAM}" luci_interpreter_micro -j ${CPU_COUNT}
+        COMMAND "${CMAKE_MAKE_PROGRAM}" onert_micro_dev -j ${CPU_COUNT}
         WORKING_DIRECTORY "${MICRO_ARM_BUILD_DIR}"
-        DEPENDS luci_interpreter_micro_arm_cmake luci_micro_circle_schema
+        DEPENDS onert_micro_arm_cmake ${OM_CIRCLE_SCHEMA}
         VERBATIM
 )
 
-add_custom_target(luci_interpreter_micro_arm DEPENDS "${MICRO_ARM_BINARY}")
+add_custom_target(onert_micro_arm DEPENDS "${MICRO_ARM_BINARY}")
 
 add_subdirectory(eval-driver)
+add_subdirectory(training-configure-tool)
 
 # Should be after add_subdirectory
 unset(ENABLE_ONERT_MICRO_TRAINING CACHE)

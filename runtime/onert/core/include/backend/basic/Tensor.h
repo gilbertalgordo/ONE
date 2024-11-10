@@ -32,6 +32,7 @@ namespace basic
 
 class DynamicMemoryManager;
 
+// Always NHWC layout
 class Tensor : public IPortableTensor
 {
 public:
@@ -39,9 +40,8 @@ public:
   virtual ~Tensor();
 
 public:
-  Tensor(const ir::OperandInfo &info, const ir::Layout layout,
-         DynamicMemoryManager *dynamic_mem_mgr)
-    : IPortableTensor(info), _layout(layout), _buffer(nullptr), _num_references(0),
+  Tensor(const ir::OperandInfo &info, DynamicMemoryManager *dynamic_mem_mgr)
+    : IPortableTensor(info), _buffer(nullptr), _size(info.total_size()), _num_references(0),
       _dynamic_mem_mgr(dynamic_mem_mgr), _allocator(nullptr)
   {
     // DO NOTHING
@@ -71,25 +71,8 @@ public:
 
 public:
   uint8_t *buffer() const override { return _buffer; }
-  /**
-   * @brief Get dimension by index
-   *
-   * @param index Index to get diemension
-   * @return size_t Dimension at index
-   * @note N : dimension(0)
-   *       H : dimension(1)
-   *       W : dimension(2)
-   *       C : dimension(3)
-   */
-  size_t total_size() const override { return _info.total_size(); }
-  size_t calcOffset(const ir::Coordinates &coords) const override;
-  ir::Layout layout() const override { return _layout; }
-  ir::DataType data_type() const override { return _info.typeInfo().type(); }
-  bool is_constant() const override { return _info.isConstant(); }
-  bool is_dynamic() const override { return _info.isDynamic(); }
   void set_dynamic() override { _info.setDynamic(); }
   bool applyShape(const ir::Shape &new_shape) override;
-  const ir::Sparsity *sparsity() const override { return _info.typeInfo().sparsity(); }
 
   virtual void increase_ref()
   {
@@ -140,11 +123,10 @@ public:
   virtual int32_t num_references() { return _num_references; }
 
   void setShape(const ir::Shape &new_shape) override;
-  ir::Shape getShape() const override;
 
 protected:
-  ir::Layout _layout;
   uint8_t *_buffer;
+  size_t _size;
   int32_t _num_references;
   DynamicMemoryManager *_dynamic_mem_mgr;
 
@@ -160,10 +142,10 @@ private:
 
 /**
  * @brief Class that uses data from external memory that is not managed by a backend
- *        instead of allocating and copying the data. ExternalTensor's data pointer points to
- *        an address of memory such as where memory is already allocated, or mmapped area.
- *        This is meaning that ExternalTensor can take all of types' ir::Data.
- *        To support this, assume below things no padding, always NHWC layout,
+ *        instead of allocating and copying the data. (ex. constant data from model file)
+ *        ExternalTensor's data pointer points to an address of memory such as where memory is
+ *        already allocated, or mmapped area. This is meaning that ExternalTensor can take all of
+ *        types' ir::Data. To support this, assume below things no padding, always NHWC layout,
  *        constant tensor and not dynamic.
  */
 class ExternalTensor : public Tensor
@@ -173,10 +155,8 @@ public:
   virtual ~ExternalTensor();
 
 public:
-  ExternalTensor(const ir::OperandInfo &info, const ir::Layout layout)
-    : Tensor(info, layout, nullptr)
+  ExternalTensor(const ir::OperandInfo &info) : Tensor(info, nullptr)
   {
-    assert(_layout == ir::Layout::NHWC);
     assert(_info.isConstant());
     assert(_info.isDynamic() == false);
   }
@@ -199,8 +179,6 @@ public:
 public:
   uint8_t *buffer() const override { return _buffer; }
 
-  bool is_constant() const override { return true; }
-  bool is_dynamic() const override { return false; }
   void set_dynamic() override
   {
     throw std::runtime_error("This tensor does not support changing dynamic");

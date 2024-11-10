@@ -17,6 +17,7 @@
 #ifndef __ONERT_BACKEND_TRAIN_TENSOR_MANAGER_H__
 #define __ONERT_BACKEND_TRAIN_TENSOR_MANAGER_H__
 
+#include "DisposableTensorIndex.h"
 #include "MemoryManager.h"
 #include "TensorRegistry.h"
 
@@ -40,13 +41,15 @@ public:
   static constexpr uint64_t _align = 16;
 
 public:
-  TensorManager(const std::shared_ptr<TensorRegistry> &reg, const std::string planner_id);
+  TensorManager(const std::shared_ptr<TensorRegistry> &reg, uint32_t optim_vars_count);
   virtual ~TensorManager() = default;
 
   void allocateNonConstTensors();
   void allocateTrainableTensors();
   void allocateBackPropTensors();
   void allocateGradientTensors();
+  void allocateDisposableBackPropTensors();
+  void allocateLayerScopeTensors();
   // TODO Add member functions to deallocate tensors
 
   void claimNonConstPlan(const ir::OperandIndex &ind);
@@ -57,12 +60,18 @@ public:
   void releaseBackPropPlan(const ir::OperandIndex &ind);
   void claimGradientPlan(const ir::OperandIndex &ind);
   void releaseGradientPlan(const ir::OperandIndex &ind);
+  void claimDisposableBackPropPlan(const DisposableTensorIndex &ind);
+  void releaseDisposableBackPropPlan(const DisposableTensorIndex &ind);
+  void claimLayerScopePlan(const LayerScopeTensorIndex &ind);
+  void releaseLayerScopePlan(const LayerScopeTensorIndex &ind);
 
 private:
   std::unique_ptr<MemoryManager> _nonconst_mgr;
-  std::unique_ptr<MemoryManager> _trainable_mgr;
+  std::unique_ptr<TrainableMemoryManager> _trainable_mgr;
   std::unique_ptr<MemoryManager> _back_prop_mgr;
   std::unique_ptr<MemoryManager> _gradient_mgr;
+  std::unique_ptr<DisposableMemoryManager> _disposable_back_prop_mgr;
+  std::unique_ptr<LayerScopeMemoryManager> _layer_scope_mgr;
   const std::shared_ptr<TensorRegistry> _tensors;
 };
 

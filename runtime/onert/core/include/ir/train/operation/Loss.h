@@ -18,7 +18,7 @@
 #define __ONERT_IR_TRAIN_OPERATION_LOSS_H__
 
 #include "ir/operation/Loss.h"
-#include "ir/train/ITrainableOperation.h"
+#include "ir/train/TrainableOperation.h"
 
 #include "ir/train/LossCode.h"
 #include "ir/train/LossInfo.h"
@@ -32,13 +32,13 @@ namespace train
 namespace operation
 {
 
-class Loss : public ir::operation::Loss, public ITrainableOperation
+class Loss : public ir::operation::Loss, public TrainableOperation
 {
 private:
   using OperationType = ir::operation::Loss;
 
 public:
-  Loss(const OperationType &operation, const LossInfo &info);
+  Loss(const OperationType &operation, const LossInfo &info, ir::OpCode y_pred_op_code);
 
 public:
   std::unique_ptr<ITrainableOperation> clone() const override;
@@ -49,9 +49,11 @@ public:
 
 public:
   const LossInfo &param() const { return _param; }
+  ir::OpCode y_pred_op_code() const { return _y_pred_op_code; }
 
 private:
   LossInfo _param;
+  ir::OpCode _y_pred_op_code; // The op code of the last node computing y_pred
 };
 
 } // namespace operation

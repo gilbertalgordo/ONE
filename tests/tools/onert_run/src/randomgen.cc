@@ -17,60 +17,55 @@
 #include "randomgen.h"
 #include "nnfw.h"
 #include "nnfw_util.h"
-#include "misc/RandomGenerator.h"
+#include "benchmark/RandomGenerator.h"
 
 #include <iostream>
 
 namespace onert_run
 {
 
-template <class T> void randomData(nnfw::misc::RandomGenerator &randgen, void *data, uint64_t size)
+template <class T> void randomData(benchmark::RandomGenerator &randgen, void *data, uint64_t size)
 {
-  for (uint64_t i = 0; i < size; i++)
+  uint64_t elems = size / sizeof(T);
+  assert(size % sizeof(T) == 0); // size should be multiple of sizeof(T)
+
+  for (uint64_t i = 0; i < elems; i++)
     reinterpret_cast<T *>(data)[i] = randgen.generate<T>();
 }
 
 void RandomGenerator::generate(std::vector<Allocation> &inputs)
 {
   // generate random data
-  const int seed = 1;
-  nnfw::misc::RandomGenerator randgen{seed, 0.0f, 2.0f};
   for (uint32_t i = 0; i < inputs.size(); ++i)
   {
-    nnfw_tensorinfo ti;
-    NNPR_ENSURE_STATUS(nnfw_input_tensorinfo(session_, i, &ti));
-    auto input_size_in_bytes = bufsize_for(&ti);
-    inputs[i].alloc(input_size_in_bytes);
-    switch (ti.dtype)
+    auto input_size_in_bytes = inputs[i].size();
+    switch (inputs[i].type())
     {
       case NNFW_TYPE_TENSOR_FLOAT32:
-        randomData<float>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<float>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_QUANT8_ASYMM:
-        randomData<uint8_t>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<uint8_t>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_BOOL:
-        randomData<bool>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<bool>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_UINT8:
-        randomData<uint8_t>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<uint8_t>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_INT32:
-        randomData<int32_t>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<int32_t>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_INT64:
-        randomData<int64_t>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<int64_t>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       case NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED:
-        randomData<int16_t>(randgen, inputs[i].data(), num_elems(&ti));
+        randomData<int16_t>(generator_, inputs[i].data(), input_size_in_bytes);
         break;
       default:
         std::cerr << "Not supported input type" << std::endl;
         std::exit(-1);
     }
-    NNPR_ENSURE_STATUS(
-      nnfw_set_input(session_, i, ti.dtype, inputs[i].data(), input_size_in_bytes));
-    NNPR_ENSURE_STATUS(nnfw_set_input_layout(session_, i, NNFW_LAYOUT_CHANNELS_LAST));
   }
 };
 

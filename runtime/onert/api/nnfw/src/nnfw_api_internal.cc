@@ -25,6 +25,9 @@
 #include "loader/ModelLoader.h"
 #include "loader/TFLiteLoader.h"
 #include "loader/TrainInfoLoader.h"
+#include "loader/train/CheckpointLoader.h"
+#include "exporter/CircleExporter.h"
+#include "exporter/train/CheckpointExporter.h"
 #include "json/json.h"
 #include "ir/NNPkg.h"
 #include "ir/OpCode.h"
@@ -32,7 +35,6 @@
 #include "util/TracingCtx.h"
 #include "odc/QuantizeManager.h"
 #include "odc/CodegenManager.h"
-#include "circle_schema_generated.h"
 
 #include <fstream>
 #include <iostream>
@@ -41,10 +43,6 @@
 #include <dirent.h>
 #include <misc/string_helpers.h>
 
-#include <fcntl.h>    // O_RDONLY
-#include <sys/mman.h> // mmap, munmap
-#include <sys/stat.h> // fstat
-#include <unistd.h>   // close
 /*
  * API does not accept string argument longer than max length below
  */
@@ -246,9 +244,10 @@ uint64_t getBufSize(const nnfw_tensorinfo *info)
 } // namespace
 
 nnfw_session::nnfw_session()
-  : _nnpkg{nullptr}, _coptions{}, _compiler_artifact{nullptr}, _execution{nullptr},
-    _kernel_registry{nullptr}, _train_info{nullptr}, _quant_manager{nullptr},
-    _codegen_manager{nullptr}
+  : _nnpkg{nullptr}, _coptions{onert::compiler::CompilerOptions::fromGlobalConfig()},
+    _compiler_artifact{nullptr}, _execution{nullptr}, _kernel_registry{nullptr},
+    _train_info{nullptr}, _quant_manager{std::make_unique<onert::odc::QuantizeManager>()},
+    _codegen_manager{std::make_unique<onert::odc::CodegenManager>()}, _model_path{""}
 {
   // DO NOTHING
 }
@@ -296,7 +295,6 @@ NNFW_STATUS nnfw_session::load_circle_from_buffer(uint8_t *buffer, size_t size)
     auto model = onert::loader::loadCircleModel(buffer, size);
     // TODO: Update _model_path if necessary
     _nnpkg = std::make_shared<onert::ir::NNPkg>(std::move(model));
-    _coptions.push_back(onert::compiler::CompilerOptions::fromGlobalConfig());
     _train_info = loadTrainingInfo(_nnpkg->primary_model());
     _state = State::MODEL_LOADED;
   }
@@ -319,11 +317,6 @@ NNFW_STATUS nnfw_session::load_model_from_modelfile(const char *model_file_path)
     return NNFW_STATUS_UNEXPECTED_NULL;
   }
 
-  // Create quantize manager
-  _quant_manager = std::make_unique<onert::odc::QuantizeManager>(std::string(model_file_path));
-  // Create codegen manager
-  _codegen_manager = std::make_unique<onert::odc::CodegenManager>(std::string{model_file_path});
-
   std::string filename{model_file_path};
   // TODO: Use std::filesystem::path when we can use c++17.
   auto dotidx = filename.find_last_of('.');
@@ -335,21 +328,13 @@ NNFW_STATUS nnfw_session::load_model_from_modelfile(const char *model_file_path)
   std::string model_type = filename.substr(dotidx + 1); // + 1 to exclude dot
   try
   {
-    auto model = loadModel(filename, model_type);
-    if (model == nullptr)
-      return NNFW_STATUS_ERROR;
-    _model_path = std::string(model_file_path);
-    _nnpkg = std::make_shared<onert::ir::NNPkg>(std::move(model));
-    _coptions.push_back(onert::compiler::CompilerOptions::fromGlobalConfig());
-    _train_info = loadTrainingInfo(_nnpkg->primary_model());
-    _state = State::MODEL_LOADED;
+    return loadModelFile(filename, model_type);
   }
   catch (const std::exception &e)
   {
     std::cerr << "Error during model loading : " << e.what() << std::endl;
     return NNFW_STATUS_ERROR;
   }
-  return NNFW_STATUS_NO_ERROR;
 }
 
 NNFW_STATUS nnfw_session::load_model_from_nnpackage(const char *package_dir)
@@ -410,12 +395,13 @@ NNFW_STATUS nnfw_session::load_model_from_nnpackage(const char *package_dir)
       return NNFW_STATUS_ERROR;
     }
 
-    // Create quantize manager
-    // TODO Support multiple models
-    auto const model_filename = package_path + std::string("/") + models[0].asString();
-    _quant_manager = std::make_unique<onert::odc::QuantizeManager>(model_filename);
-    // Create codegen manager
-    _codegen_manager = std::make_unique<onert::odc::CodegenManager>(model_filename);
+    // Not support backend mapping to operator index for multiple models yet
+    // TODO Support this
+    if (num_models > 1 && _coptions->manual_scheduler_options.index_to_backend.size() != 0)
+    {
+      std::cerr << "Cannot set backend to operator index for multiple models" << std::endl;
+      return NNFW_STATUS_ERROR;
+    }
 
     for (uint16_t i = 0; i < num_models; ++i)
     {
@@ -424,11 +410,11 @@ NNFW_STATUS nnfw_session::load_model_from_nnpackage(const char *package_dir)
       auto model = loadModel(model_file_path, model_type);
       if (model == nullptr)
         return NNFW_STATUS_ERROR;
-      _model_path = std::string(model_file_path);
+      _model_path = std::string(model_file_path); // TODO Support multiple models
       model->bindKernelBuilder(_kernel_registry->getBuilder());
       _nnpkg->push(onert::ir::ModelIndex{i}, std::move(model));
-      _coptions.push_back(onert::compiler::CompilerOptions::fromGlobalConfig());
     }
+
     _train_info = loadTrainingInfo(_nnpkg->primary_model());
 
     auto toIODesc = [](std::string str) {
@@ -490,7 +476,7 @@ NNFW_STATUS nnfw_session::prepare()
 
   try
   {
-    auto compiler = onert::compiler::CompilerFactory::get().create(_nnpkg, _coptions);
+    auto compiler = onert::compiler::CompilerFactory::get().create(_nnpkg, _coptions.get());
     _nnpkg.reset();
     _compiler_artifact = compiler->compile();
     _execution = std::make_unique<onert::exec::Execution>(_compiler_artifact->_executors);
@@ -503,12 +489,6 @@ NNFW_STATUS nnfw_session::prepare()
 
   _state = State::PREPARED;
   return NNFW_STATUS_NO_ERROR;
-}
-
-NNFW_STATUS nnfw_session::prepare_pipeline(const char *)
-{
-  std::cerr << "Pipeline prepare_pipeline: deprecated feature " << std::endl;
-  return NNFW_STATUS_ERROR;
 }
 
 NNFW_STATUS nnfw_session::run()
@@ -570,7 +550,7 @@ NNFW_STATUS nnfw_session::await()
   return NNFW_STATUS_NO_ERROR;
 }
 
-NNFW_STATUS nnfw_session::set_input(uint32_t index, NNFW_TYPE /*type*/, const void *buffer,
+NNFW_STATUS nnfw_session::set_input(uint32_t index, NNFW_TYPE type, const void *buffer,
                                     size_t length)
 {
   if (!isStatePreparedOrFinishedRun())
@@ -589,6 +569,10 @@ NNFW_STATUS nnfw_session::set_input(uint32_t index, NNFW_TYPE /*type*/, const vo
 
   try
   {
+    // Allow float input internal quantization only
+    if (type == NNFW_TYPE_TENSOR_FLOAT32)
+      _execution->setInputType(onert::ir::IOIndex(index),
+                               onert::ir::TypeInfo(onert::ir::DataType::FLOAT32));
     _execution->setInput(onert::ir::IOIndex(index), buffer, length);
   }
   catch (const std::exception &e)
@@ -599,8 +583,7 @@ NNFW_STATUS nnfw_session::set_input(uint32_t index, NNFW_TYPE /*type*/, const vo
   return NNFW_STATUS_NO_ERROR;
 }
 
-NNFW_STATUS nnfw_session::set_output(uint32_t index, NNFW_TYPE /*type*/, void *buffer,
-                                     size_t length)
+NNFW_STATUS nnfw_session::set_output(uint32_t index, NNFW_TYPE type, void *buffer, size_t length)
 {
   if (!isStatePreparedOrFinishedRun())
   {
@@ -618,6 +601,10 @@ NNFW_STATUS nnfw_session::set_output(uint32_t index, NNFW_TYPE /*type*/, void *b
 
   try
   {
+    // Allow float output internal dequantization only
+    if (type == NNFW_TYPE_TENSOR_FLOAT32)
+      _execution->setOutputType(onert::ir::IOIndex(index),
+                                onert::ir::TypeInfo(onert::ir::DataType::FLOAT32));
     _execution->setOutput(onert::ir::IOIndex(index), buffer, length);
   }
   catch (const std::exception &e)
@@ -729,7 +716,7 @@ NNFW_STATUS nnfw_session::set_output_layout(uint32_t index, NNFW_LAYOUT layout)
   return NNFW_STATUS_NO_ERROR;
 }
 
-NNFW_STATUS nnfw_session::apply_tensorinfo(uint32_t index, nnfw_tensorinfo ti)
+NNFW_STATUS nnfw_session::set_input_tensorinfo(uint32_t index, const nnfw_tensorinfo *ti)
 {
   // sanity check
   {
@@ -740,25 +727,32 @@ NNFW_STATUS nnfw_session::apply_tensorinfo(uint32_t index, nnfw_tensorinfo ti)
       return NNFW_STATUS_INVALID_STATE;
     }
 
-    if (ti.rank <= 0 || ti.rank > NNFW_MAX_RANK)
+    if (ti == nullptr)
     {
-      std::cerr << "unsupported rank: " << ti.rank << std::endl;
+      std::cerr << "Error during nnfw_session::set_input_tensorinfo : tensorinfo is null"
+                << std::endl;
+      return NNFW_STATUS_UNEXPECTED_NULL;
+    }
+
+    if (ti->rank <= 0 || ti->rank > NNFW_MAX_RANK)
+    {
+      std::cerr << "unsupported rank: " << ti->rank << std::endl;
       return NNFW_STATUS_ERROR;
     }
 
-    for (int32_t i = 0; i < ti.rank; ++i)
+    for (int32_t i = 0; i < ti->rank; ++i)
     {
-      if (ti.dims[i] <= 0)
+      if (ti->dims[i] <= 0)
       {
-        std::cerr << "dim must be positive integer but was " << ti.dims[i] << std::endl;
+        std::cerr << "dim must be positive integer but was " << ti->dims[i] << std::endl;
         return NNFW_STATUS_ERROR;
       }
     }
   }
 
-  onert::ir::Shape new_shape(ti.rank);
-  for (int32_t i = 0; i < ti.rank; i++)
-    new_shape.dim(i) = ti.dims[i];
+  onert::ir::Shape new_shape(ti->rank);
+  for (int32_t i = 0; i < ti->rank; i++)
+    new_shape.dim(i) = ti->dims[i];
 
   if (!isStatePreparedOrFinishedRun())
   {
@@ -770,12 +764,6 @@ NNFW_STATUS nnfw_session::apply_tensorinfo(uint32_t index, nnfw_tensorinfo ti)
     _execution->changeInputShape(onert::ir::IOIndex(index), new_shape);
 
   return NNFW_STATUS_NO_ERROR;
-}
-
-NNFW_STATUS nnfw_session::set_input_tensorinfo(uint32_t index, const nnfw_tensorinfo *ti)
-{
-  nnfw_tensorinfo ti_copy = *ti;
-  return apply_tensorinfo(index, ti_copy);
 }
 
 NNFW_STATUS nnfw_session::input_tensorinfo(uint32_t index, nnfw_tensorinfo *ti)
@@ -863,46 +851,11 @@ NNFW_STATUS nnfw_session::output_tensorinfo(uint32_t index, nnfw_tensorinfo *ti)
   return NNFW_STATUS_NO_ERROR;
 }
 
-NNFW_STATUS nnfw_session::push_pipeline_input(std::vector<void *> *, std::vector<uint32_t> *)
-{
-  std::cerr << "Pipeline push_pipeline_input: deprecated feature " << std::endl;
-  return NNFW_STATUS_ERROR;
-}
-
-NNFW_STATUS nnfw_session::pop_pipeline_output(std::vector<void *> *)
-{
-  std::cerr << "Pipeline pop_pipeline_output: deprecated feature " << std::endl;
-  return NNFW_STATUS_ERROR;
-}
-
 NNFW_STATUS nnfw_session::register_custom_operation(const std::string &id,
                                                     nnfw_custom_eval eval_func)
 {
   _kernel_registry->registerKernel(id, eval_func);
   return NNFW_STATUS_NO_ERROR;
-}
-
-static std::string get_op_backend_string(std::string op)
-{
-#define MAP_MACRO(CircleName, OneRTName) {#CircleName, #OneRTName},
-
-  static std::unordered_map<std::string, std::string> operation_map = {
-#include "OpMap.lst"
-  };
-
-#undef MAP_MACRO
-
-  auto n = operation_map.find(op);
-
-  if (n == operation_map.end())
-  {
-    // this return value is handled by a caller to return error code
-    return std::string("");
-  }
-  else
-  {
-    return n->second;
-  }
 }
 
 NNFW_STATUS nnfw_session::set_available_backends(const char *backends)
@@ -917,11 +870,9 @@ NNFW_STATUS nnfw_session::set_available_backends(const char *backends)
     if (null_terminating(backends, MAX_BACKEND_NAME_LENGTH) == false)
       return NNFW_STATUS_ERROR;
 
-    auto &options = *_coptions[0];
-
     using namespace onert::util;
 
-    options.backend_list = nnfw::misc::split(std::string{backends}, ';');
+    _coptions->backend_list = nnfw::misc::split(std::string{backends}, ';');
   }
   catch (const std::exception &e)
   {
@@ -931,35 +882,25 @@ NNFW_STATUS nnfw_session::set_available_backends(const char *backends)
   return NNFW_STATUS_NO_ERROR;
 }
 
-NNFW_STATUS nnfw_session::set_op_backend(const char *op, const char *backend)
+NNFW_STATUS nnfw_session::set_workspace(const char *dir)
 {
-  if (!isStateModelLoaded())
+  // TODO Check dir read & write permission
+
+  if (!dir)
+    return NNFW_STATUS_UNEXPECTED_NULL;
+
+  if (!isStateInitialized())
     return NNFW_STATUS_INVALID_STATE;
 
-  try
-  {
-    if (!op || !backend)
-      return NNFW_STATUS_UNEXPECTED_NULL;
-    if (!null_terminating(op, MAX_OP_NAME_LENGTH) ||
-        !null_terminating(backend, MAX_BACKEND_NAME_LENGTH))
-      return NNFW_STATUS_ERROR;
+  _coptions->workspace_dir = std::string(dir);
 
-    auto key = get_op_backend_string(op);
-
-    if (key.empty())
-    {
-      return NNFW_STATUS_ERROR;
-    }
-
-    auto &opcode_to_backend = _coptions[0]->manual_scheduler_options.opcode_to_backend;
-    opcode_to_backend.emplace(onert::ir::toOpCode(key), backend);
-  }
-  catch (const std::exception &e)
-  {
-    std::cerr << "Error during nnfw_session::set_op_backend : " << e.what() << std::endl;
-    return NNFW_STATUS_ERROR;
-  }
   return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::deprecated(const char *msg)
+{
+  std::cerr << msg << std::endl;
+  return NNFW_STATUS_DEPRECATED_API;
 }
 
 NNFW_STATUS nnfw_session::set_config(const char *key, const char *value)
@@ -970,35 +911,29 @@ NNFW_STATUS nnfw_session::set_config(const char *key, const char *value)
   if (!key || !value)
     return NNFW_STATUS_UNEXPECTED_NULL;
 
-  auto &options = *_coptions[0];
-
   using namespace onert::util;
 
   const std::string skey = key;
 
-  if (skey == config::TRACE_FILEPATH)
+  if (skey == config::GRAPH_DOT_DUMP)
   {
-    options.trace_filepath = value;
-  }
-  else if (skey == config::GRAPH_DOT_DUMP)
-  {
-    options.graph_dump_level = toInt(value);
+    _coptions->graph_dump_level = toInt(value);
   }
   else if (skey == config::EXECUTOR)
   {
-    options.executor = value;
+    _coptions->executor = value;
   }
   else if (skey == config::OP_BACKEND_ALLOPS)
   {
-    options.manual_scheduler_options.backend_for_all = value;
+    _coptions->manual_scheduler_options.backend_for_all = value;
   }
   else if (skey == config::USE_SCHEDULER)
   {
-    options.he_scheduler = toBool(value);
+    _coptions->he_scheduler = toBool(value);
   }
   else if (skey == config::PROFILING_MODE)
   {
-    options.he_profiling_mode = toBool(value);
+    _coptions->he_profiling_mode = toBool(value);
   }
   else
   {
@@ -1046,6 +981,23 @@ uint32_t nnfw_session::getOutputSize()
   return _compiler_artifact->_executors->outputSize();
 }
 
+NNFW_STATUS nnfw_session::loadModelFile(const std::string &model_file_path,
+                                        const std::string &model_type)
+{
+  auto model = loadModel(model_file_path, model_type);
+  if (model == nullptr)
+    return NNFW_STATUS_ERROR;
+
+  _nnpkg = std::make_shared<onert::ir::NNPkg>(std::move(model));
+  _model_path = model_file_path;
+  _compiler_artifact.reset();
+  _execution.reset();
+  _train_info = loadTrainingInfo(_nnpkg->primary_model());
+  _state = State::MODEL_LOADED;
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
 NNFW_STATUS nnfw_session::get_config(const char *key, char *value, size_t value_size)
 {
   if (!isStateModelLoaded())
@@ -1053,8 +1005,6 @@ NNFW_STATUS nnfw_session::get_config(const char *key, char *value, size_t value_
 
   if (!key || !value)
     return NNFW_STATUS_UNEXPECTED_NULL;
-
-  auto &options = *_coptions[0];
 
   auto check_boundary = [](size_t dest_size, std::string &src) {
     if (dest_size < src.length() + 1 /* for '\0' */)
@@ -1069,10 +1019,11 @@ NNFW_STATUS nnfw_session::get_config(const char *key, char *value, size_t value_
 
   if (skey == onert::util::config::BACKENDS)
   {
-    if (options.backend_list.size() == 0)
+    if (_coptions->backend_list.size() == 0)
       return NNFW_STATUS_NO_ERROR; // no setting backend is not an error of get_config_str()
 
-    auto str = nnfw::misc::join(options.backend_list.begin(), options.backend_list.end(), ";");
+    auto str =
+      nnfw::misc::join(_coptions->backend_list.begin(), _coptions->backend_list.end(), ";");
 
     if (!check_boundary(value_size, str))
       return NNFW_STATUS_ERROR;
@@ -1081,10 +1032,10 @@ NNFW_STATUS nnfw_session::get_config(const char *key, char *value, size_t value_
   }
   else if (skey == onert::util::config::EXECUTOR)
   {
-    if (!check_boundary(value_size, options.executor))
+    if (!check_boundary(value_size, _coptions->executor))
       return NNFW_STATUS_ERROR;
 
-    strncpy(value, options.executor.c_str(), options.executor.length());
+    strncpy(value, _coptions->executor.c_str(), _coptions->executor.length());
   }
   else
   {
@@ -1099,7 +1050,6 @@ bool nnfw_session::isStateInitialized()
   if (_state == State::INITIALIZED)
   {
     assert(_nnpkg == nullptr);
-    assert(_coptions.empty());
     assert(_execution == nullptr);
     return true;
   }
@@ -1114,7 +1064,6 @@ bool nnfw_session::isStateModelLoaded()
   if (_state == State::MODEL_LOADED)
   {
     assert(_nnpkg != nullptr);
-    assert(!_coptions.empty());
     assert(_execution == nullptr);
     return true;
   }
@@ -1129,7 +1078,6 @@ bool nnfw_session::isStatePrepared()
   if (_state == State::PREPARED)
   {
     assert(_nnpkg == nullptr);
-    assert(!_coptions.empty());
     assert(_execution != nullptr);
     return true;
   }
@@ -1144,7 +1092,6 @@ bool nnfw_session::isStateRunning()
   if (_state == State::RUNNING)
   {
     assert(_nnpkg == nullptr);
-    assert(!_coptions.empty());
     assert(_execution != nullptr);
     return true;
   }
@@ -1156,7 +1103,6 @@ bool nnfw_session::isStateFinishedRun()
   if (_state == State::FINISHED_RUN)
   {
     assert(_nnpkg == nullptr);
-    assert(!_coptions.empty());
     assert(_execution != nullptr);
     return true;
   }
@@ -1189,9 +1135,25 @@ NNFW_STATUS nnfw_session::set_backends_per_operation(const char *backend_setting
   if (!isStateModelLoaded())
     return NNFW_STATUS_INVALID_STATE;
 
-  // Backend for all
-  auto &ms_options = _coptions[0]->manual_scheduler_options;
-  ms_options.setBackendMap(std::string{backend_settings});
+  // Not supported multiple model
+  // TODO Support this
+  if (_nnpkg->model_count() > 1)
+  {
+    std::cerr << "Not supported multiple model" << std::endl;
+    return NNFW_STATUS_ERROR;
+  }
+
+  try
+  {
+    // Backend for all
+    auto &ms_options = _coptions->manual_scheduler_options;
+    ms_options.setBackendMap(std::string{backend_settings});
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error during nnfw_session::set_backends_per_operation" << e.what() << std::endl;
+    return NNFW_STATUS_ERROR;
+  }
 
   return NNFW_STATUS_NO_ERROR;
 }
@@ -1269,6 +1231,41 @@ NNFW_STATUS nnfw_session::train_get_traininfo(nnfw_train_info *info)
     info->loss_info.loss = convertLossCode(loss.loss_code);
     info->loss_info.reduction_type = convertLossReduction(loss.reduction_type);
     info->opt = convertOptimizerCode(optim.optim_code);
+
+    if (_train_info->getTrainableOps().size() > 0)
+    {
+      const uint32_t first_trainable_idx = _train_info->getTrainableOps().cbegin()->value();
+      const uint32_t last_trainable_idx = _train_info->getTrainableOps().crbegin()->value();
+      const uint32_t ops_size = primary_subgraph()->operations().size();
+      const uint32_t trainable_indexes_range = last_trainable_idx - first_trainable_idx + 1;
+
+      // check if trainable ops set contains continuous indexes on the back of the set
+      if (last_trainable_idx == ops_size - 1 &&
+          trainable_indexes_range == _train_info->getTrainableOps().size())
+      {
+        // check if all ops are trainable
+        if (0 == first_trainable_idx)
+        {
+          info->num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_ALL;
+        }
+        else
+        {
+          info->num_of_trainable_ops = trainable_indexes_range;
+        }
+      }
+      else
+      {
+        info->num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_INCORRECT_STATE;
+        std::cerr << "conversion from set of trainable ops to num_of_trainable_ops is impossible"
+                  << std::endl;
+        return NNFW_STATUS_INVALID_STATE;
+      }
+    }
+    else
+    {
+      // no layer will be trained
+      info->num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_NONE;
+    }
   }
   catch (const std::exception &e)
   {
@@ -1336,6 +1333,42 @@ NNFW_STATUS nnfw_session::train_set_traininfo(const nnfw_train_info *info)
     _train_info->setBatchSize(info->batch_size);
     _train_info->setLossInfo(loss_info);
     _train_info->setOptimizerInfo(opt_info);
+
+    if (info->num_of_trainable_ops < -1)
+    {
+      std::cerr << "Error during nnfw_session::train_set_traininfo: provided num_of_trainable_ops "
+                   "has incorrect value: "
+                << info->num_of_trainable_ops << std::endl;
+      return NNFW_STATUS_ERROR;
+    }
+
+    const uint32_t ops_size = primary_subgraph()->operations().size();
+    std::set<onert::ir::OperationIndex> trainable_ops;
+
+    if (NNFW_TRAIN_TRAINABLE_ALL == info->num_of_trainable_ops)
+    {
+      for (uint32_t idx = 0; idx < ops_size; ++idx)
+      {
+        trainable_ops.emplace(idx);
+      }
+    }
+    else
+    {
+      if (static_cast<uint32_t>(info->num_of_trainable_ops) > ops_size)
+      {
+        std::cerr
+          << "Error during nnfw_session::train_set_traininfo: provided num_of_trainable_ops="
+          << info->num_of_trainable_ops << " is out of operators range equals: " << ops_size
+          << std::endl;
+        return NNFW_STATUS_ERROR;
+      }
+      for (uint32_t i = 1; i <= static_cast<uint32_t>(info->num_of_trainable_ops); ++i)
+      {
+        trainable_ops.emplace(ops_size - i);
+      }
+    }
+    // Note that possible setting an empty trainable_ops set (for NNFW_TRAIN_TRAINABLE_NONE value)
+    _train_info->setTrainableOps(trainable_ops);
   }
   catch (const std::exception &e)
   {
@@ -1372,7 +1405,7 @@ NNFW_STATUS nnfw_session::train_prepare()
     _train_info->trainingStep() = 0;
 
     auto compiler =
-      onert::compiler::CompilerFactory::get().create(_nnpkg, _coptions, _train_info.get());
+      onert::compiler::CompilerFactory::get().create(_nnpkg, _coptions.get(), _train_info.get());
     _nnpkg.reset();
     _compiler_artifact = compiler->compile();
     _execution = std::make_unique<onert::exec::Execution>(_compiler_artifact->_executors);
@@ -1627,94 +1660,10 @@ NNFW_STATUS nnfw_session::train_export_circle(const char *path)
     return NNFW_STATUS_INVALID_STATE;
   }
 
-  class MMappedFile
-  {
-  public:
-    MMappedFile(const char *filename) { _fd = open(filename, O_RDWR); }
-
-    bool ensure_mmap()
-    {
-      struct stat file_stat;
-      if (fstat(_fd, &file_stat) != 0 || file_stat.st_size < 0 ||
-          static_cast<uint64_t>(file_stat.st_size) > SIZE_MAX)
-        return false;
-
-      _buf_sz = static_cast<size_t>(file_stat.st_size);
-      _buf = mmap(NULL, _buf_sz, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
-      return _buf != MAP_FAILED;
-    }
-
-    bool sync() { return msync(_buf, _buf_sz, MS_SYNC) == 0; }
-
-    bool close()
-    {
-      bool ret = false;
-      if (_buf != MAP_FAILED)
-      {
-        ret = munmap(_buf, _buf_sz) == 0;
-        _buf = MAP_FAILED; // mark as cleaned up
-      }
-      if (_fd != -1)
-      {
-        ::close(_fd);
-        _fd = -1; // mark as cleaned up
-      }
-      return ret;
-    }
-
-    ~MMappedFile() { close(); }
-
-    uint8_t *buf() const { return static_cast<uint8_t *>(_buf); }
-    size_t buf_size() const { return _buf_sz; }
-
-  private:
-    int _fd;
-    void *_buf = MAP_FAILED;
-    size_t _buf_sz = 0;
-  };
-
-  MMappedFile mmapfile(path);
-  if (!mmapfile.ensure_mmap())
-    return NNFW_STATUS_ERROR;
-
-  // make sure the architecture is little endian before direct access to flatbuffers
-  assert(FLATBUFFERS_LITTLEENDIAN);
-
   try
   {
-    _execution->iterateTrainableTensors([&](const onert::ir::OperandIndex &idx,
-                                            const onert::backend::train::ITrainableTensor *tensor) {
-      auto model = ::circle::GetModel(mmapfile.buf());
-      if (!model)
-        throw std::runtime_error("Failed to get model from circle");
-
-      auto subgs = model->subgraphs();
-      if (!subgs || subgs->size() != 1)
-        throw std::runtime_error("Circle does not has valid subgraph or has multiple subgraphs");
-
-      auto subg = subgs->Get(0); // Get 1st subgraph
-      if (!idx.valid() || idx.value() >= subg->tensors()->size())
-        throw std::runtime_error("Trainable tensor index is out of range");
-
-      auto buf_idx = subg->tensors()->Get(idx.value())->buffer();
-      const ::circle::Buffer *buffer = (*model->buffers())[buf_idx];
-      if (!buffer || !buffer->data())
-        throw std::runtime_error("Buffer for trainable tensors is invalid");
-
-      const flatbuffers::Vector<uint8_t> *array = buffer->data();
-      if (!array)
-        throw std::runtime_error("Data for trainable tensor's buffer is invalid");
-
-      auto org_buf_sz = array->size();
-      if (org_buf_sz != tensor->total_size())
-        throw std::runtime_error("Trained tensor buffer size does not match original tensor's one");
-
-      uint8_t *org_buf = const_cast<uint8_t *>(array->Data());
-      if (!org_buf)
-        throw std::runtime_error("Data for trainable tensor's buffer is invalid");
-
-      memcpy(const_cast<uint8_t *>(org_buf), tensor->buffer(), org_buf_sz);
-    });
+    onert::exporter::CircleExporter exporter(_model_path, std::string{path});
+    exporter.updateWeight(_execution);
   }
   catch (const std::exception &e)
   {
@@ -1722,11 +1671,89 @@ NNFW_STATUS nnfw_session::train_export_circle(const char *path)
     return NNFW_STATUS_ERROR;
   }
 
-  if (mmapfile.sync() == false)
-    return NNFW_STATUS_ERROR;
+  return NNFW_STATUS_NO_ERROR;
+}
 
-  if (mmapfile.close() == false)
+NNFW_STATUS nnfw_session::train_export_circleplus(const char *path)
+{
+  if (path == nullptr)
+  {
+    std::cerr << "Error during nnfw_session::train_export_circleplus : path is null" << std::endl;
+    return NNFW_STATUS_UNEXPECTED_NULL;
+  }
+
+  if (!isStatePreparedOrFinishedTraining())
+  {
+    std::cerr << "Error during nnfw_session::train_export_circleplus : invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  try
+  {
+    onert::exporter::CircleExporter exporter(_model_path, std::string{path});
+    exporter.updateWeight(_execution);
+    exporter.updateMetadata(_train_info);
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error during nnfw_session::train_export_circleplus : " << e.what() << std::endl;
     return NNFW_STATUS_ERROR;
+  }
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::train_import_checkpoint(const char *path)
+{
+  if (path == nullptr)
+  {
+    std::cerr << "Error during nnfw_session::train_import_checkpoint : path is null" << std::endl;
+    return NNFW_STATUS_UNEXPECTED_NULL;
+  }
+
+  if (!isStatePreparedOrFinishedTraining())
+  {
+    std::cerr << "Error during nnfw_session::train_import_checkpoint : invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  try
+  {
+    onert::loader::train::loadCheckpoint(path, _train_info, _execution);
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error during nnfw_session::train_import_checkpoint : " << e.what() << std::endl;
+    return NNFW_STATUS_ERROR;
+  }
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::train_export_checkpoint(const char *path)
+{
+  if (path == nullptr)
+  {
+    std::cerr << "Error during nnfw_session::train_export_checkpoint : path is null" << std::endl;
+    return NNFW_STATUS_UNEXPECTED_NULL;
+  }
+
+  // Check training mode is enabled
+  if (!isStateFinishedTraining())
+  {
+    std::cerr << "Error during nnfw_session::train_export_checkpoint : invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  try
+  {
+    onert::exporter::train::exportCheckpoint(path, _train_info, _execution);
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error during nnfw_session::train_export_checkpoint : " << e.what() << std::endl;
+    return NNFW_STATUS_ERROR;
+  }
 
   return NNFW_STATUS_NO_ERROR;
 }
@@ -1736,7 +1763,6 @@ bool nnfw_session::isStatePreparedTraining()
   if (_state == State::PREPARED_TRAINING)
   {
     assert(_nnpkg == nullptr);
-    assert(!_coptions.empty());
     assert(_execution != nullptr);
     return true;
   }
@@ -1749,7 +1775,6 @@ bool nnfw_session::isStateFinishedTraining()
   if (_state == State::FINISHED_TRAINING)
   {
     assert(_nnpkg == nullptr);
-    assert(!_coptions.empty());
     assert(_execution != nullptr);
     return true;
   }
@@ -1764,26 +1789,34 @@ bool nnfw_session::isStatePreparedOrFinishedTraining()
 
 NNFW_STATUS nnfw_session::set_quantization_type(NNFW_QUANTIZE_TYPE qtype)
 {
+  using onert::odc::QuantizeType;
   try
   {
-    if (!isStateModelLoaded())
+    if (isStateInitialized() || isStateRunning())
     {
       std::cerr << "invalid state" << std::endl;
       return NNFW_STATUS_INVALID_STATE;
     }
 
-    bool is_q16 = false;
+    QuantizeType odc_qtype = onert::odc::ODC_QTYPE_NOT_SET;
     switch (qtype)
     {
       case NNFW_QUANTIZE_TYPE_U8_ASYM:
+        odc_qtype = onert::odc::ODC_QTYPE_U8_ASYM;
         break;
       case NNFW_QUANTIZE_TYPE_I16_SYM:
-        is_q16 = true;
+        odc_qtype = onert::odc::ODC_QTYPE_I16_SYM;
+        break;
+      case NNFW_QUANTIZE_TYPE_WO_I8_SYM:
+        odc_qtype = onert::odc::ODC_QTYPE_WO_I8_SYM;
+        break;
+      case NNFW_QUANTIZE_TYPE_WO_I16_SYM:
+        odc_qtype = onert::odc::ODC_QTYPE_WO_I16_SYM;
         break;
       default:
         return NNFW_STATUS_INVALID_STATE;
     }
-    _quant_manager->quantizeType(is_q16);
+    _quant_manager->quantizeType(odc_qtype);
   }
   catch (const std::exception &e)
   {
@@ -1798,7 +1831,7 @@ NNFW_STATUS nnfw_session::set_quantized_model_path(const char *path)
 {
   try
   {
-    if (!isStateModelLoaded())
+    if (isStateInitialized() || isStateRunning())
     {
       std::cerr << "invalid state" << std::endl;
       return NNFW_STATUS_INVALID_STATE;
@@ -1819,38 +1852,32 @@ NNFW_STATUS nnfw_session::quantize()
 {
   try
   {
-    if (!isStateModelLoaded())
+    if (isStateInitialized() || isStateRunning())
     {
       std::cerr << "invalid state" << std::endl;
       return NNFW_STATUS_INVALID_STATE;
     }
 
-    auto result = _quant_manager->quantize();
+    auto result = _quant_manager->quantize(_model_path);
     if (!result)
       return NNFW_STATUS_INVALID_STATE;
 
     // Replace model
     // TODO Support buffer replace, not file reload
-    auto model = loadModel(_quant_manager->exportModelPath(), "circle");
-    if (model == nullptr)
-      return NNFW_STATUS_ERROR;
-    // TODO: Update _model_path if necessary
-    _nnpkg->replaceModel(std::move(model));
+    return loadModelFile(_quant_manager->exportModelPath(), "circle");
   }
   catch (const std::exception &e)
   {
     std::cerr << "Error during nnfw_session::quantize : " << e.what() << std::endl;
     return NNFW_STATUS_ERROR;
   }
-
-  return NNFW_STATUS_NO_ERROR;
 }
 
 NNFW_STATUS nnfw_session::set_codegen_model_path(const char *path)
 {
   try
   {
-    if (!isStateModelLoaded())
+    if (isStateInitialized() || isStateRunning())
     {
       std::cerr << "invalid state" << std::endl;
       return NNFW_STATUS_INVALID_STATE;
@@ -1872,7 +1899,7 @@ NNFW_STATUS nnfw_session::codegen(const char *target, NNFW_CODEGEN_PREF pref)
 {
   try
   {
-    if (!isStateModelLoaded())
+    if (isStateInitialized() || isStateRunning())
     {
       std::cerr << "Error during nnfw_session::codegen : Invalid state" << std::endl;
       return NNFW_STATUS_INVALID_STATE;
@@ -1922,7 +1949,7 @@ NNFW_STATUS nnfw_session::codegen(const char *target, NNFW_CODEGEN_PREF pref)
       _codegen_manager->exportModelPath(export_model_path);
     }
 
-    _codegen_manager->codegen(target, codegen_pref);
+    _codegen_manager->codegen(_model_path, target, codegen_pref);
 
     // Replace model
     // TODO Support buffer replace, not file reload
@@ -1937,18 +1964,92 @@ NNFW_STATUS nnfw_session::codegen(const char *target, NNFW_CODEGEN_PREF pref)
     }
 
     std::string model_type = export_model_path.substr(dotidx + 1); // + 1 to exclude dot
-    auto model = loadModel(export_model_path, model_type);
-    if (model == nullptr)
-      return NNFW_STATUS_ERROR;
 
-    // TODO: Update _model_path if necessary
-    _nnpkg->replaceModel(std::move(model));
+    // Replace model
+    // TODO Support buffer replace, not file reload
+    return loadModelFile(export_model_path, model_type);
   }
   catch (const std::exception &e)
   {
     std::cerr << "Error during nnfw_session::compile : " << e.what() << std::endl;
     return NNFW_STATUS_ERROR;
   }
+}
+
+NNFW_STATUS nnfw_session::set_prepare_config(const NNFW_PREPARE_CONFIG key, const char *)
+{
+  if (!isStateModelLoaded())
+  {
+    std::cerr << "Error during nnfw_session::set_prepare_config : Invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  switch (key)
+  {
+    case NNFW_PREPARE_CONFIG_PROFILE:
+      _coptions->he_profiling_mode = true;
+      break;
+    default:
+      return NNFW_STATUS_ERROR;
+  }
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::reset_prepare_config()
+{
+  if (!isStateModelLoaded())
+  {
+    std::cerr << "Error during nnfw_session::reset_prepare_config : Invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  _coptions->he_profiling_mode = false;
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::set_execute_config(const NNFW_RUN_CONFIG key, const char *)
+{
+  if (!isStatePreparedOrFinishedRun())
+  {
+    std::cerr << "Error during nnfw_session::set_execution_config : Invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  switch (key)
+  {
+    case NNFW_RUN_CONFIG_DUMP_MINMAX:
+      if (_coptions->workspace_dir.empty())
+        return NNFW_STATUS_ERROR;
+      _execution->executionOptions().dump_minmax = true;
+      break;
+    case NNFW_RUN_CONFIG_TRACE:
+      if (_coptions->workspace_dir.empty())
+        return NNFW_STATUS_ERROR;
+      _execution->executionOptions().trace = true;
+      break;
+    case NNFW_RUN_CONFIG_PROFILE:
+      _execution->executionOptions().profile = true;
+      break;
+    default:
+      return NNFW_STATUS_ERROR;
+  }
+
+  return NNFW_STATUS_NO_ERROR;
+}
+
+NNFW_STATUS nnfw_session::reset_execute_config()
+{
+  if (!isStatePreparedOrFinishedRun())
+  {
+    std::cerr << "Error during nnfw_session::set_execution_config : Invalid state" << std::endl;
+    return NNFW_STATUS_INVALID_STATE;
+  }
+
+  _execution->executionOptions().dump_minmax = false;
+  _execution->executionOptions().trace = false;
+  _execution->executionOptions().profile = false;
 
   return NNFW_STATUS_NO_ERROR;
 }

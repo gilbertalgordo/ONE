@@ -1,6 +1,6 @@
 Name:    nnfw
 Summary: nnfw
-Version: 1.27.0
+Version: 1.30.0
 Release: 1
 Group:   Development
 License: Apache-2.0 and MIT and BSD-2-Clause and MPL-2.0
@@ -12,28 +12,22 @@ Source2001: nnfw.pc.in
 Source2002: nnfw-plugin.pc.in
 Source3001: ABSEIL.tar.gz
 Source3002: CPUINFO.tar.gz
-Source3003: EGL_HEADERS.tar.gz
-Source3004: FARMHASH.tar.gz
+Source3003: FARMHASH.tar.gz
+Source3004: FLATBUFFERS-23.5.26.tar.gz
 Source3005: FP16.tar.gz
 Source3006: FXDIV.tar.gz
-Source3007: GEMMLOWP.tar.gz
-Source3008: OOURAFFT.tar.gz
-Source3009: OPENCL_HEADERS.tar.gz
-Source3010: OPENGL_HEADERS.tar.gz
-Source3011: PSIMD.tar.gz
-Source3012: PTHREADPOOL.tar.gz
-Source3013: TENSORFLOW-2.8.0-EIGEN.tar.gz
-Source3014: TENSORFLOW-2.8.0-GEMMLOWP.tar.gz
-Source3015: TENSORFLOW-2.8.0-RUY.tar.gz
-Source3016: TENSORFLOW-2.8.0.tar.gz
-Source3017: VULKAN.tar.gz
-Source3018: XNNPACK.tar.gz
-Source3019: FLATBUFFERS-23.5.26.tar.gz
-Source3020: NEON2SSE.tar.gz
-Source3021: FLATBUFFERS-2.0.tar.gz
+Source3007: MLDTYPES.tar.gz
+Source3008: NEON2SSE.tar.gz
+Source3009: OOURAFFT.tar.gz
+Source3010: PSIMD.tar.gz
+Source3011: PTHREADPOOL.tar.gz
+Source3012: TENSORFLOW-2.16.1-EIGEN.tar.gz
+Source3013: TENSORFLOW-2.16.1-GEMMLOWP.tar.gz
+Source3014: TENSORFLOW-2.16.1-RUY.tar.gz
+Source3015: TENSORFLOW-2.16.1.tar.gz
+Source3016: XNNPACK.tar.gz
 
 %{!?build_type:     %define build_type      Release}
-%{!?npud_build:     %define npud_build      1}
 %{!?trix_support:   %define trix_support    1}
 %{!?odc_build:      %define odc_build       1}
 %{!?coverage_build: %define coverage_build  0}
@@ -50,29 +44,18 @@ Source3021: FLATBUFFERS-2.0.tar.gz
 %define test_build 1
 %endif
 
-%ifarch riscv64
-# Disable npud on risc-v
-# TODO Enable on risc-v
-%define npud_build 0
-%endif
-
 BuildRequires:  cmake
 
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 
 %if %{test_build} == 1
-BuildRequires:  pkgconfig(boost)
 BuildRequires:  pkgconfig(tensorflow2-lite)
-BuildRequires:  hdf5-devel
+BuildRequires:  hdf5-devel-static
 BuildRequires:  libaec-devel
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(libjpeg)
 BuildRequires:  gtest-devel
-%endif
-
-%if %{npud_build} == 1
-BuildRequires:  pkgconfig(glib-2.0)
 %endif
 
 %if %{trix_support} == 1
@@ -121,14 +104,6 @@ If you want to get coverage info, you should install runtime package which is bu
 # TODO Use release runtime pacakge for test
 %endif
 
-%if %{npud_build} == 1
-%package npud
-Summary: NPU daemon
-
-%description npud
-NPU daemon for optimal management of NPU hardware
-%endif
-
 %ifarch armv7l
 %define target_arch armv7l
 %endif
@@ -175,10 +150,6 @@ NPU daemon for optimal management of NPU hardware
 # Set option for configuration
 %define option_config %{nil}
 %if %{config_support} == 1
-%if %{npud_build} == 1
-# ENVVAR_NPUD_CONFIG: Use environment variable for npud configuration and debug
-%define option_config -DENVVAR_NPUD_CONFIG=ON
-%endif # npud_build
 %endif # config_support
 
 %if %{coverage_build} == 1
@@ -188,6 +159,11 @@ NPU daemon for optimal management of NPU hardware
 %define build_options -DCMAKE_BUILD_TYPE=%{build_type} -DTARGET_ARCH=%{target_arch} -DTARGET_OS=tizen \\\
         -DEXTERNALS_BUILD_THREAD=%{nproc} -DBUILD_MINIMAL_SAMPLE=ON -DNNFW_OVERLAY_DIR=$(pwd)/%{overlay_path} \\\
         %{option_test} %{option_coverage} %{option_config} %{extra_option}
+
+%define strip_options %{nil}
+%if %{build_type} == "Release"
+%define strip_options --strip
+%endif
 
 %prep
 %setup -q
@@ -210,11 +186,6 @@ tar -xf %{SOURCE3013} -C ./externals
 tar -xf %{SOURCE3014} -C ./externals
 tar -xf %{SOURCE3015} -C ./externals
 tar -xf %{SOURCE3016} -C ./externals
-tar -xf %{SOURCE3017} -C ./externals
-tar -xf %{SOURCE3018} -C ./externals
-tar -xf %{SOURCE3019} -C ./externals
-tar -xf %{SOURCE3020} -C ./externals
-tar -xf %{SOURCE3021} -C ./externals
 
 %build
 %ifarch arm armv7l armv7hl aarch64 x86_64 %ix86 riscv64
@@ -224,21 +195,26 @@ tar -xf %{SOURCE3021} -C ./externals
         -DCMAKE_INSTALL_PREFIX=$(pwd)/%{overlay_path} \
 	-DBUILD_WHITELIST="luci;foder;pepper-csv2vec;loco;locop;logo;logo-core;mio-circle08;luci-compute;oops;hermes;hermes-std;angkor;pp;pepper-strcast;pepper-str"
 %{nncc_env} ./nncc build %{build_jobs}
-cmake --install %{nncc_workspace}
-%endif # odc_build
+cmake --install %{nncc_workspace} %{strip_options}
 
 # install angkor TensorIndex and oops InternalExn header (TODO: Remove this)
 mkdir -p %{overlay_path}/include/nncc/core/ADT/tensor
 mkdir -p %{overlay_path}/include/oops
+mkdir -p %{overlay_path}/include/luci/IR
+mkdir -p %{overlay_path}/include/mio/circle
 cp compiler/angkor/include/nncc/core/ADT/tensor/Index.h %{overlay_path}/include/nncc/core/ADT/tensor
 cp compiler/oops/include/oops/InternalExn.h %{overlay_path}/include/oops
+cp compiler/luci/lang/include/luci/IR/CircleNodes.lst %{overlay_path}/include/luci/IR
+cp %{nncc_workspace}/compiler/mio-circle08/gen/mio/circle/schema_generated.h %{overlay_path}/include/mio/circle
+cp -r %{nncc_workspace}/overlay/include/flatbuffers %{overlay_path}/include
+%endif # odc_build
 
 # runtime build
 %{build_env} ./nnfw configure %{build_options}
 %{build_env} ./nnfw build %{build_jobs}
 # install in workspace
 # TODO Set install path
-%{build_env} ./nnfw install --prefix %{nnfw_workspace}/out
+%{build_env} ./nnfw install --prefix %{nnfw_workspace}/out %{strip_options}
 
 %if %{test_build} == 1
 %if %{coverage_build} == 1
@@ -251,10 +227,14 @@ tar -zcf test-suite.tar.gz infra/scripts
 %install
 %ifarch arm armv7l armv7hl aarch64 x86_64 %ix86 riscv64
 
-mkdir -p %{buildroot}%{_libdir}
+mkdir -p %{buildroot}%{_libdir}/nnfw/backend
+mkdir -p %{buildroot}%{_libdir}/nnfw/loader
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_includedir}
 install -m 644 build/out/lib/*.so %{buildroot}%{_libdir}
+install -m 644 build/out/lib/nnfw/*.so %{buildroot}%{_libdir}/nnfw/
+install -m 644 build/out/lib/nnfw/backend/*.so %{buildroot}%{_libdir}/nnfw/backend
+install -m 644 build/out/lib/nnfw/loader/*.so %{buildroot}%{_libdir}/nnfw/loader
 install -m 755 build/out/bin/onert-minimal-app %{buildroot}%{_bindir}
 cp -r build/out/include/* %{buildroot}%{_includedir}/
 
@@ -305,16 +285,6 @@ install -m 644 %{overlay_path}/lib/libloco*.so %{buildroot}%{_libdir}/nnfw/odc
 install -m 644 build/out/lib/nnfw/odc/*.so %{buildroot}%{_libdir}/nnfw/odc
 %endif # odc_build
 
-%if %{npud_build} == 1
-install -m 755 build/out/bin/npud %{buildroot}%{_bindir}
-
-%if %{test_build} == 1
-mkdir -p %{test_install_path}/npud-gtest
-install -m 755 build/out/npud-gtest/* %{test_install_path}/npud-gtest
-%endif # test_build
-
-%endif # npud_build
-
 %endif
 
 %post -p /sbin/ldconfig
@@ -325,6 +295,9 @@ install -m 755 build/out/npud-gtest/* %{test_install_path}/npud-gtest
 %defattr(-,root,root,-)
 %ifarch arm armv7l armv7hl aarch64 x86_64 %ix86 riscv64
 %{_libdir}/*.so
+%{_libdir}/nnfw/*.so
+%{_libdir}/nnfw/backend/*.so
+%{_libdir}/nnfw/loader/*.so
 %exclude %{_includedir}/CL/*
 %endif
 
@@ -362,15 +335,6 @@ install -m 755 build/out/npud-gtest/* %{test_install_path}/npud-gtest
 %{test_install_home}/*
 %endif # arm armv7l armv7hl aarch64
 %endif # test_build
-
-%if %{npud_build} == 1
-%files npud
-%manifest %{name}.manifest
-%defattr(-,root,root,-)
-%ifarch arm armv7l armv7hl aarch64 x86_64 %ix86 riscv64
-%{_bindir}/npud
-%endif # arm armv7l armv7hl aarch64 x86_64 %ix86
-%endif # npud_build
 
 %if %{odc_build} == 1
 %files odc

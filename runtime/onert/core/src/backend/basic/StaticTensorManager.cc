@@ -48,10 +48,8 @@ void StaticTensorManager::allocateNonconsts(void)
 {
   _nonconst_mgr->allocate();
 
-  for (auto &&pair : _tensors->native_tensors())
+  for (auto &&[ind, tensor] : _tensors->native_tensors())
   {
-    const auto &ind = pair.first;
-    auto tensor = pair.second.get();
     if (!_as_constants[ind] && !tensor->is_dynamic())
     {
       auto *buffer = _nonconst_mgr->getBuffer(ind);
@@ -66,19 +64,18 @@ void StaticTensorManager::allocateNonconsts(void)
 void StaticTensorManager::deallocateNonconsts(void) { _nonconst_mgr->deallocate(); }
 
 void StaticTensorManager::buildTensor(const ir::OperandIndex &ind,
-                                      const ir::OperandInfo &tensor_info, ir::Layout backend_layout,
-                                      bool as_const)
+                                      const ir::OperandInfo &tensor_info, bool as_const)
 {
   assert(!_tensors->getNativeTensor(ind));
   if (as_const)
   {
-    auto tensor = std::make_unique<ExternalTensor>(tensor_info, backend_layout);
+    auto tensor = std::make_unique<ExternalTensor>(tensor_info);
     _tensors->setNativeTensor(ind, std::move(tensor));
   }
   else
   {
-    auto tensor = std::make_unique<Tensor>(tensor_info, backend_layout,
-                                           _dynamic_tensor_manager->dynamic_mem_mgr().get());
+    auto tensor =
+      std::make_unique<Tensor>(tensor_info, _dynamic_tensor_manager->dynamic_mem_mgr().get());
     _tensors->setNativeTensor(ind, std::move(tensor));
   }
   _as_constants[ind] = as_const;

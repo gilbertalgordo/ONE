@@ -42,15 +42,6 @@ PYBIND11_MODULE(libnnfw_api_pybind, m)
       "\t\tMultiple backends can be set and they must be separated by a semicolon "
       "(ex: \"acl_cl;cpu\")\n"
       "\t\tAmong the multiple backends, the 1st element is used as the default backend.")
-    .def(
-      py::init<const char *, const char *, const char *>(), py::arg("package_file_path"),
-      py::arg("op"), py::arg("backends"),
-      "Create a new session instance, load model from nnpackage file or directory, "
-      "set the operation's backend and prepare session to be ready for inference\n"
-      "Parameters:\n"
-      "\tpackage_file_path (str): Path to the nnpackage file or unzipped directory to be loaded\n"
-      "\top (str): operation to be set\n"
-      "\tbackends (str): Bakcend on which operation run")
     .def("set_input_tensorinfo", &NNFW_SESSION::set_input_tensorinfo, py::arg("index"),
          py::arg("tensor_info"),
          "Set input model's tensor info for resizing.\n"
@@ -59,7 +50,7 @@ PYBIND11_MODULE(libnnfw_api_pybind, m)
          "\ttensor_info (tensorinfo): Tensor info to be set")
     .def("run", &NNFW_SESSION::run, "Run inference")
     .def("run_async", &NNFW_SESSION::run_async, "Run inference asynchronously")
-    .def("await", &NNFW_SESSION::await, "Wait for asynchronous run to finish")
+    .def("wait", &NNFW_SESSION::wait, "Wait for asynchronous run to finish")
     .def(
       "set_input",
       [](NNFW_SESSION &session, uint32_t index, py::array_t<float> &buffer) {

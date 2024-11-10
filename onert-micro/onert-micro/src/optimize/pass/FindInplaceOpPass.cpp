@@ -56,12 +56,12 @@ OMStatus isInplaceOperation(const circle::Operator *op, core::OMRuntimeContext &
     case circle::BuiltinOperator_ADD:
     case circle::BuiltinOperator_MUL:
     case circle::BuiltinOperator_SUB:
-    case circle::BuiltinOperator_WHILE:
     case circle::BuiltinOperator_ZEROS_LIKE:
     {
       is_inplace = true;
       break;
     }
+#if 0 // FIXME: Enable after custom operation is introduced
     case circle::BuiltinOperator_CUSTOM:
     {
       core::OMBuilderCustomID custom_id;
@@ -84,10 +84,13 @@ OMStatus isInplaceOperation(const circle::Operator *op, core::OMRuntimeContext &
           break;
         default:
           is_inplace = false;
+          break;
       }
     }
+#endif
     default:
       is_inplace = false;
+      break;
   }
   return status;
 }
@@ -200,7 +203,7 @@ OMStatus checkInplaceOp(core::OMRuntimeContext &context, const circle::Operator 
 OMStatus findInplaceOp(core::OMRuntimeStorage &storage, core::OMRuntimeContext &context,
                        const OMConfig &configs, bool &is_changed)
 {
-  OMStatus status;
+  OMStatus status = Ok;
 
   const core::reader::CircleOperators *operators = context.getCircleOperators();
 
@@ -213,9 +216,7 @@ OMStatus findInplaceOp(core::OMRuntimeStorage &storage, core::OMRuntimeContext &
     auto cur_op = operators->operator[](i);
 
     bool is_inplace = false;
-    status = isInplaceOperation(cur_op, context, is_inplace);
-    if (status != Ok)
-      return status;
+    isInplaceOperation(cur_op, context, is_inplace);
 
     if (is_inplace == false)
       continue;
@@ -246,6 +247,12 @@ optimize::OMGraphStatus optimize::onert_micro_FindInplaceOpPass(core::OMRuntimeS
   bool changed = false;
 
   OMGraphStatus graph_status = {Unchanged, Ok};
+
+  // If it is train mode, skip inplace optimization
+  // We need all tensors
+  if (configs.train_mode)
+    return graph_status;
+
   do
   {
     changed = false;

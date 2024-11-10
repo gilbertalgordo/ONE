@@ -28,7 +28,6 @@
 #include "rawdataloader.h"
 #include "metrics.h"
 
-#include <boost/program_options.hpp>
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -130,7 +129,7 @@ int main(const int argc, char **argv)
       auto it = std::find(acc.begin(), acc.end(), type);
       if (it == acc.end())
         return "metric";
-      return "accuracy";
+      return "categorical_accuracy";
     };
 
     // get training information
@@ -145,6 +144,8 @@ int main(const int argc, char **argv)
       args.getLossReductionType().value_or(tri.loss_info.reduction_type);
     tri.opt = args.getOptimizerType().value_or(tri.opt);
 
+    tri.num_of_trainable_ops = args.num_of_trainable_ops();
+
     std::cout << "== training parameter ==" << std::endl;
     std::cout << tri;
     std::cout << "========================" << std::endl;
@@ -155,7 +156,12 @@ int main(const int argc, char **argv)
     // prepare execution
 
     // TODO When nnfw_{prepare|run} are failed, can't catch the time
-    measure.run(PhaseType::PREPARE, [&]() { NNPR_ENSURE_STATUS(nnfw_train_prepare(session)); });
+    measure.run(PhaseType::PREPARE, [&]() {
+      NNPR_ENSURE_STATUS(nnfw_train_prepare(session));
+
+      if (const auto name = args.getCheckpointFilename(); name != "")
+        NNPR_ENSURE_STATUS(nnfw_train_import_checkpoint(session, name.c_str()));
+    });
 
     // prepare input and expected tensor info lists
     std::vector<nnfw_tensorinfo> input_infos;
@@ -245,6 +251,7 @@ int main(const int argc, char **argv)
         //
         {
           std::fill(losses.begin(), losses.end(), 0);
+          std::fill(metrics.begin(), metrics.end(), 0);
           for (uint32_t n = 0; n < num_step; ++n)
           {
             // get batchsize data
@@ -269,12 +276,18 @@ int main(const int argc, char **argv)
             measure.run(epoch, n, [&]() { NNPR_ENSURE_STATUS(nnfw_train(session, true)); });
 
             // store loss
+            Metrics metric(output_data, expected_data, expected_infos);
             for (int32_t i = 0; i < num_expecteds; ++i)
             {
               float temp = 0.f;
               NNPR_ENSURE_STATUS(nnfw_train_get_loss(session, i, &temp));
               losses[i] += temp;
+              if (args.getMetricType() == 0)
+                metrics[i] += metric.categoricalAccuracy(i);
             }
+
+            if (const auto name = args.getExportCheckpointFilename(); name != "")
+              NNPR_ENSURE_STATUS(nnfw_train_export_checkpoint(session, name.c_str()));
           }
 
           // print loss
@@ -286,6 +299,16 @@ int main(const int argc, char **argv)
           for (uint32_t i = 0; i < num_expecteds; ++i)
           {
             std::cout << "[" << i << "] " << losses[i] / num_step;
+          }
+          // TODO use init-statement in selection statements (c++17)
+          std::string str;
+          if ((str = getMetricTypeStr(args.getMetricType())) != "")
+          {
+            std::cout << " - " << str << ": ";
+            for (uint32_t i = 0; i < num_expecteds; ++i)
+            {
+              std::cout << "[" << i << "] " << metrics[i] / num_step;
+            }
           }
         }
 
@@ -356,19 +379,17 @@ int main(const int argc, char **argv)
       }
     });
 
-    if (args.getExportModelFilename() != "")
-      NNPR_ENSURE_STATUS(nnfw_train_export_circle(session, args.getExportModelFilename().c_str()));
+    if (auto name = args.getExportCircleFilename(); name != "")
+      NNPR_ENSURE_STATUS(nnfw_train_export_circle(session, name.c_str()));
+
+    if (auto name = args.getExportCirclePlusFilename(); name != "")
+      NNPR_ENSURE_STATUS(nnfw_train_export_circleplus(session, name.c_str()));
 
     NNPR_ENSURE_STATUS(nnfw_close_session(session));
 
     measure.printResult();
 
     return 0;
-  }
-  catch (boost::program_options::error &e)
-  {
-    std::cerr << "E: " << e.what() << std::endl;
-    exit(-1);
   }
   catch (std::runtime_error &e)
   {

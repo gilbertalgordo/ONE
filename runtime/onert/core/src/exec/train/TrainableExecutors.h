@@ -67,22 +67,30 @@ public:
 
   const ir::OperandInfo &outputInfo(const ir::IOIndex &index) const override;
 
-  void execute(const IODescription &desc) override;
+  void execute(const ExecutionContext &ctx) override;
 
   /**
    * @brief Train
    *
-   * @param desc          IO information
+   * @param ctx           Execution context
    * @param training_step The number of iterations of an training process.
    *                      In other words, the number of gradient update.
    */
-  void train(const IODescription &desc, uint32_t training_step);
+  void train(const ExecutionContext &ctx, uint32_t training_step);
 
   float getLoss(const ir::IOIndex &index) const;
 
   void iterateTrainableTensors(
     const std::function<void(const ir::OperandIndex &, const backend::train::ITrainableTensor *)>
       &fn) const;
+
+private:
+  // If you want to use I/O buffer on step, tensorpool should be alive until one step is finished
+  // So this method get tensorpool from outside.
+  // tensorpool is not defined as a member variable to avoid memory access conflict between threads.
+  void forward(const ExecutionContext &ctx,
+               std::vector<std::unique_ptr<backend::builtin::UserTensor>> &tensorpool,
+               bool training);
 
 private:
   // TODO Append model index to ModelIndex

@@ -21,6 +21,7 @@
 #include <ir/DataType.h>
 #include <ir/Operand.h>
 #include <ir/Padding.h>
+#include <ir/operation/RoPE.h>
 #include <util/CalculateActivationRange.h>
 
 #include <cker/Shape.h>
@@ -97,9 +98,6 @@ inline nnfw::cker::Shape getShape(const IPortableTensor *tensor)
     return nnfw::cker::Shape();
 
   const ir::Shape &shape = tensor->get_info().shape();
-
-  assert(tensor->layout() == ir::Layout::NHWC);
-
   auto rank = shape.rank();
   nnfw::cker::Shape ret(rank);
   auto data = ret.DimsData();
@@ -132,20 +130,13 @@ convertActivationType(const ir::Activation activation)
   }
 }
 
-inline int32_t getAxis(uint32_t rank, int32_t axis, ir::Layout frontend_layout)
+inline int32_t getAxis(uint32_t rank, int32_t axis)
 {
   auto ret = axis;
 
   if (axis < 0)
   {
     ret += rank;
-  }
-
-  // NCHW -> NHWC
-  if (frontend_layout == ir::Layout::NCHW)
-  {
-    int32_t permutation[4] = {0, 3, 1, 2};
-    ret = permutation[ret];
   }
 
   return ret;
@@ -178,6 +169,8 @@ uint32_t sizeOfData(OperandType type, const std::vector<int32_t> &dimensions);
 nnfw::cker::PaddingType getPaddingType(ir::PaddingType ir_padding_type);
 
 std::vector<int32_t> getReducerAxes(const IPortableTensor *axes);
+
+nnfw::cker::RoPEMode getRoPEMode(ir::operation::RoPE::RoPEMode rope_mode);
 
 template <typename T> const T *getBuffer(const IPortableTensor *tensor)
 {

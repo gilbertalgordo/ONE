@@ -18,6 +18,7 @@
 #define __ONERT_BACKEND_BASIC_MEMORY_PLANNER_FACTORY_H__
 
 #include "backend/basic/IMemoryPlanner.h"
+#include "MemoryPlanner.h"
 
 #include <string>
 
@@ -37,7 +38,7 @@ private:
   MemoryPlannerFactory() = default;
 
 public:
-  IMemoryPlanner *create(const std::string &key);
+  IMemoryPlanner<ir::OperandIndex> *create(const std::string &key);
 };
 
 } // namespace basic

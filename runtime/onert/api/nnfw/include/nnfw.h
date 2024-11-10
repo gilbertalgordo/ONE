@@ -38,7 +38,7 @@ extern "C" {
  *
  * <p>After loading, prepare inference by calling {@link nnfw_prepare}.
  * Application can set runtime environment before prepare by calling
- * {@link nnfw_set_available_backends} and {@link nnfw_set_op_backend}, and it is optional.
+ * {@link nnfw_set_available_backends}, and it is optional.
  *
  * <p>Application can inference by calling {@link nnfw_run}.
  * Before inference, application has responsibility to set input tensor to set input data by calling
@@ -123,6 +123,8 @@ typedef enum
   NNFW_STATUS_OUT_OF_MEMORY = 4,
   /** When it was given an insufficient output buffer */
   NNFW_STATUS_INSUFFICIENT_OUTPUT_SIZE = 5,
+  /** When API is deprecated */
+  NNFW_STATUS_DEPRECATED_API = 6,
 } NNFW_STATUS;
 
 /**
@@ -253,6 +255,7 @@ NNFW_STATUS nnfw_apply_tensorinfo(nnfw_session *session, uint32_t index,
  * When it is called after calling {@link nnfw_prepare} or even after {@link nnfw_run}, this info
  * will be used when {@link nnfw_run}. And the shapes of the tensors are determined on the fly.
  * If this function is called many times for the same index, it is overwritten.
+ * tensor_info's dtype field is ignored.
  *
  * @param[in] session     Session to the input tensor info is to be set
  * @param[in] index       Index of input to be set (0-indexed)
@@ -329,6 +332,9 @@ NNFW_STATUS nnfw_await(nnfw_session *session);
  * reused for many inferences. \p length must be greater or equal than the operand requires. To
  * specify an optional input, you can either not call this for that input or call this with \p
  * buffer of NULL and \p length of 0.
+ * If you set {@link NNFW_TYPE_TENSOR_FLOAT32} type and model has quantized input type on given
+ * index, runtime will set quantized data type model input by converting from float buffer data
+ * internally.
  *
  * @param[in] session Session to the input is to be set
  * @param[in] index   Index of input to be set (0-indexed)
@@ -348,6 +354,9 @@ NNFW_STATUS nnfw_set_input(nnfw_session *session, uint32_t index, NNFW_TYPE type
  * reused for many inferences. \p length must be greater or equal than the operand requires. An
  * output operand can have unspecified shape and deduced dynamically during the execution. You must
  * provide \p buffer large enough.
+ * If you set {@link NNFW_TYPE_TENSOR_FLOAT32} type and model has quantized output type on given
+ * index, runtime will set dequantized float buffer data from quantize data type model output
+ * internally.
  *
  * @param[in]   session Session from inference output is to be extracted
  * @param[in]   index   Index of output to be set (0-indexed)
@@ -502,6 +511,20 @@ NNFW_STATUS nnfw_set_op_backend(nnfw_session *session, const char *op, const cha
  * @return @c NNFW_STATUS_NO_ERROR if successful
  */
 NNFW_STATUS nnfw_query_info_u32(nnfw_session *session, NNFW_INFO_ID id, uint32_t *val);
+
+/**
+ * @brief     Set runtime's workspace directory
+ *
+ * <p>This function sets the directory to be used as a workspace.
+ * System should allow read and write access to the directory for the runtime.
+ * Default workspace is running directory of the application.
+ * This function should be called before {@link nnfw_load_model_from_file} is invoked.</p>
+ *
+ * @param[in] session session to be queried on.
+ * @param[in] dir     workspace directory path
+ * @return    @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_set_workspace(nnfw_session *session, const char *dir);
 
 #ifdef __cplusplus
 }

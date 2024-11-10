@@ -27,6 +27,7 @@
 #include "luci/Pass/QuantizeWithMinMaxPass.h"
 #include "luci/Pass/QuantizeDequantizeWeightsPass.h"
 #include "luci/Pass/QuantizeWeightsPass.h"
+#include "luci/Pass/QuantizeOnnxFakeQuantModelPass.h"
 
 #include "luci/Pass/CircleShapeInferencePass.h"
 #include "luci/Pass/CircleTypeInferencePass.h"
@@ -387,7 +388,7 @@ CircleQuantizer::Options *CircleQuantizer::options(void)
   return _options.get();
 }
 
-void CircleQuantizer::quantize(loco::Graph *g) const
+void CircleQuantizer::quantize_dequantize_weight(loco::Graph *g) const
 {
   // Fake quantization of weights
   if (_options->query(Options::Algorithm::QuantizeDequantizeWeights))
@@ -443,7 +444,7 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     }
 
     // Clear existing quantparams before doing fake quantization
-    for (auto node : loco::active_nodes(loco::output_nodes(g)))
+    for (auto &node : loco::active_nodes(loco::output_nodes(g)))
     {
       auto circle_node = loco::must_cast<luci::CircleNode *>(node);
       if (circle_node->quantparam() != nullptr)
@@ -472,7 +473,10 @@ void CircleQuantizer::quantize(loco::Graph *g) const
 
     fake_quantizer.run(g);
   }
+}
 
+void CircleQuantizer::quantize_with_min_max(loco::Graph *g) const
+{
   // Actual quantization of weights, bias, and activation
   if (_options->query(Options::Algorithm::QuantizeWithMinMax))
   {
@@ -622,11 +626,14 @@ void CircleQuantizer::quantize(loco::Graph *g) const
 
     verifier.verify(g);
   }
+}
 
+void CircleQuantizer::quantize_weights(loco::Graph *g) const
+{
   if (_options->query(Options::Algorithm::QuantizeWeights))
   {
     static const std::vector<std::string> qw_supported_input_model_dtype{"float32"};
-    static const std::vector<std::string> qw_supported_output_model_dtype{"int8", "int16"};
+    static const std::vector<std::string> qw_supported_output_model_dtype{"int4", "int8", "int16"};
     static const std::vector<std::string> qw_supported_granularity{"channel"};
 
     auto input_model_dtype =
@@ -656,7 +663,37 @@ void CircleQuantizer::quantize(loco::Graph *g) const
 
     weights_quantizer.run(g);
   }
+}
 
+void CircleQuantizer::quantize_onnx_fake_quantized_model(loco::Graph *g) const
+{
+  if (_options->query(Options::Algorithm::QuantizeOnnxFakeQuantizedModel))
+  {
+    auto ctx = std::make_unique<luci::QuantizeOnnxFakeQuantModelPass::Context>();
+    {
+      ctx->default_activation_dtype = loco::DataType::S16;
+    }
+
+    luci::QuantizeOnnxFakeQuantModelPass quantizer(std::move(ctx));
+
+    quantizer.run(g);
+
+    logo::Phase phase;
+
+    // Default passes
+    phase.emplace_back(std::make_unique<logo::RemoveDeadNodeWithQueryPass>());
+    phase.emplace_back(std::make_unique<luci::CircleShapeInferencePass>());
+    phase.emplace_back(std::make_unique<luci::CircleTypeInferencePass>());
+
+    ProgressReporter prog(g, logo::PhaseStrategy::Restart);
+    logo::PhaseRunner<logo::PhaseStrategy::Restart> phase_runner{g};
+    phase_runner.attach(&prog);
+    phase_runner.run(phase);
+  }
+}
+
+void CircleQuantizer::requantize(loco::Graph *g) const
+{
   // Requantize
   if (_options->query(Options::Algorithm::Requantize))
   {
@@ -680,7 +717,10 @@ void CircleQuantizer::quantize(loco::Graph *g) const
                                      str_to_dtype(output_model_dtype));
     requantizer.run(g);
   }
+}
 
+void CircleQuantizer::force_quant_param(loco::Graph *g) const
+{
   // Force to write quantparam to specified tensors
   // NOTE Only per-tensor (not per-channel) qparam can be written
   if (_options->query(Options::Algorithm::ForceQuantParam))
@@ -697,7 +737,10 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     ForceQuantParamPass fq(tensors, scales, zero_points);
     fq.run(g);
   }
+}
 
+void CircleQuantizer::copy_quant_param(loco::Graph *g) const
+{
   // Copy quantparam of a tensor to another tensor
   if (_options->query(Options::Algorithm::CopyQuantParam))
   {
@@ -709,7 +752,10 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     CopyQuantParamPass cq(src_tensors, dst_tensors);
     cq.run(g);
   }
+}
 
+void CircleQuantizer::convert_to_fake_quantized_model(loco::Graph *g) const
+{
   // Convert quantized model to fake-quantized model
   if (_options->query(Options::Algorithm::ConvertToFakeQuantizedModel))
   {
@@ -733,6 +779,18 @@ void CircleQuantizer::quantize(loco::Graph *g) const
     phase_runner.attach(&prog);
     phase_runner.run(phase);
   }
+}
+
+void CircleQuantizer::quantize(loco::Graph *g) const
+{
+  quantize_dequantize_weight(g);
+  quantize_with_min_max(g);
+  quantize_weights(g);
+  quantize_onnx_fake_quantized_model(g);
+  requantize(g);
+  force_quant_param(g);
+  copy_quant_param(g);
+  convert_to_fake_quantized_model(g);
 
   logo::Phase phase;
 

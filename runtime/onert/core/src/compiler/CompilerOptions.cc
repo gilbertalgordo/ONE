@@ -64,6 +64,9 @@ void ManualSchedulerOptions::setBackendMap(const std::string &str)
     }
 
     auto key_val = nnfw::misc::split(key_val_str, '=');
+    if (key_val.size() != 2)
+      throw std::runtime_error{"Invalid key-value pair"};
+
     const auto &key_str = key_val.at(0);
     const auto &val = key_val.at(1);
     auto key = static_cast<uint32_t>(std::stoi(key_str));
@@ -75,13 +78,12 @@ std::unique_ptr<CompilerOptions> CompilerOptions::fromGlobalConfig()
 {
   auto o = std::make_unique<CompilerOptions>();
   o->backend_list = nnfw::misc::split(util::getConfigString(util::config::BACKENDS), ';');
-  o->minmax_filepath = util::getConfigString(util::config::MINMAX_FILEPATH);
-  o->trace_filepath = util::getConfigString(util::config::TRACE_FILEPATH);
   o->graph_dump_level = util::getConfigInt(util::config::GRAPH_DOT_DUMP);
   o->executor = util::getConfigString(util::config::EXECUTOR);
   o->he_scheduler = util::getConfigBool(util::config::USE_SCHEDULER);
   o->he_profiling_mode = util::getConfigBool(util::config::PROFILING_MODE);
   o->fp16_enable = util::getConfigBool(util::config::FP16_ENABLE);
+  o->workspace_dir = util::getConfigString(util::config::WORKSPACE_DIR);
   {
     // Backend for all
     auto &ms_options = o->manual_scheduler_options;
@@ -129,7 +131,6 @@ void CompilerOptions::verboseOptions()
   VERBOSE(Compiler) << std::boolalpha << "==== Compiler Options ====" << std::endl;
   VERBOSE(Compiler) << "backend_list             : "
                     << nnfw::misc::join(backend_list.begin(), backend_list.end(), "/") << std::endl;
-  VERBOSE(Compiler) << "trace_filepath           : " << trace_filepath << std::endl;
   VERBOSE(Compiler) << "graph_dump_level         : " << graph_dump_level << std::endl;
   VERBOSE(Compiler) << "executor                 : " << executor << std::endl;
   VERBOSE(Compiler) << "manual backend_for_all   : " << manual_scheduler_options.backend_for_all

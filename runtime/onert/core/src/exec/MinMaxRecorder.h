@@ -20,9 +20,8 @@
 #include "ExecutionObservers.h"
 #include "ir/Index.h"
 #include "exec/MinMaxMap.h"
-#include "../dumper/h5/MinMaxDumper.h"
 
-#include <memory>
+#include <string>
 
 namespace onert
 {
@@ -32,7 +31,7 @@ namespace exec
 class MinMaxRecorder : public IExecutionObserver
 {
 public:
-  MinMaxRecorder(const std::string &minmax_filepath, const ir::Graph &graph,
+  MinMaxRecorder(const std::string &workspace_dir, const ir::Graph &graph,
                  const backend::BackendContexts &backend_contexts);
   void handleJobBegin(IExecutor *, ir::SubgraphIndex, ir::OperationIndex,
                       const backend::Backend *) override
@@ -43,11 +42,12 @@ public:
                     const backend::Backend *) override;
   void handleSubgraphBegin(ir::SubgraphIndex) override;
   void handleSubgraphEnd(ir::SubgraphIndex) override;
+  ObserverType type() const override { return ObserverType::MINMAX_DUMP; }
 
 private:
   const ir::Graph &_graph;
   const backend::BackendContexts &_backend_contexts;
-  dumper::h5::MinMaxDumper _h5dumper;
+  std::string _workspace_dir;
   OpMinMaxMap _op_minmax;
   IOMinMaxMap _input_minmax;
 };

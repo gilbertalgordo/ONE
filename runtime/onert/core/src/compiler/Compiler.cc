@@ -38,15 +38,14 @@ namespace onert
 namespace compiler
 {
 
-Compiler::Compiler(const std::shared_ptr<ir::Model> &model, CompilerOptions &copt)
-  : _model{model}, _options{&copt}
+Compiler::Compiler(const std::shared_ptr<ir::Model> &model, CompilerOptions *copts)
+  : _model{model}, _options{copts}
 {
   // DO NOTHING
 }
 
-Compiler::Compiler(const std::shared_ptr<ir::NNPkg> &nnpkg,
-                   std::vector<std::unique_ptr<CompilerOptions>> &copts)
-  : _model{nnpkg->primary_model()}, _options{copts[0].get()}
+Compiler::Compiler(const std::shared_ptr<ir::NNPkg> &nnpkg, CompilerOptions *copts)
+  : _model{nnpkg->primary_model()}, _options{copts}
 {
   // Use for single model only
   assert(nnpkg->model_count() == 1);
@@ -69,12 +68,6 @@ std::shared_ptr<CompilerArtifact> Compiler::compile(void)
 
     if (_options->executor != "Dataflow")
       throw std::runtime_error("Profiling mode works only with 'Dataflow' executor");
-  }
-
-  if (!_options->minmax_filepath.empty())
-  {
-    if (_options->executor != "Linear")
-      throw std::runtime_error("Recording minmax works only with Linear executor");
   }
 
   if (!_model->hasOnly<ir::Graph>())
@@ -119,17 +112,14 @@ std::shared_ptr<CompilerArtifact> Compiler::compile(void)
       // Lower: Assign backend
       lowered_subgs[subg_index] = std::make_unique<compiler::LoweredGraph>(subg, *_options);
       // Set tracing_ctx for copied graph
-      if (tracing_ctx != nullptr)
-        tracing_ctx->setSubgraphIndex(&(lowered_subgs[subg_index]->graph()), subg_index.value());
+      tracing_ctx->setSubgraphIndex(&(lowered_subgs[subg_index]->graph()), subg_index.value());
     });
   }
 
   _model.reset();
 
-  for (const auto &pair : lowered_subgs)
+  for (const auto &[subg_index, lowered_subg] : lowered_subgs)
   {
-    const auto &subg_index = pair.first;
-    const auto &lowered_subg = pair.second;
     dot_dumper.dump(*lowered_subg, nnfw::misc::str("after_lower_subg-", subg_index.value()));
   }
 
@@ -167,11 +157,9 @@ std::shared_ptr<CompilerArtifact> Compiler::compile(void)
    *  Backend independent analysis & optimization phase finished
    *************************************************************/
   auto executors = std::make_shared<exec::SingleModelExecutors>();
-  for (auto &&pair : lowered_subgs)
+  for (auto &&[subg_index, lowered_subg] : lowered_subgs)
   {
     auto const model_index = ir::ModelIndex{0};
-    auto const subg_index = pair.first;
-    auto &lowered_subg = pair.second;
     auto const indexed_ranks = lowered_subg->indexed_ranks();
 
     ir::OperationDumper dumper("Executor generation of Subgraph " +

@@ -19,6 +19,7 @@
 #define ONERT_MICRO_EXECUTE_PAL_ADD_H
 
 #include "PALAddCommon.h"
+#include "PALUtils.h"
 
 namespace onert_micro
 {
@@ -26,18 +27,12 @@ namespace execute
 {
 namespace pal
 {
-template <>
-OMStatus Add<int8_t>(const core::BinaryArithmeticBroadcastParams &params, const int flat_size,
-                     const int8_t *input1_data, const int8_t *input2_data, int8_t *output_data)
-{
-  assert(false && "Not IMPL yet");
-}
 
-template <>
-OMStatus Add<int16_t>(const core::BinaryArithmeticBroadcastParams &params, const int flat_size,
-                      const int16_t *input1_data, const int16_t *input2_data, int16_t *output_data)
+OMStatus Add(const core::ArithmeticQuantParams &params, const uint32_t flat_size,
+             const int8_t *input1_data, const int8_t *input2_data, int8_t *output_data)
 {
-  assert(false && "Not IMPL yet");
+  ElementWise(flat_size, params, input1_data, input2_data, output_data, AddFunc);
+  return Ok;
 }
 
 } // namespace pal

@@ -90,17 +90,20 @@ OMStatus onert_micro::execute::execute_kernel_CircleAdd(const OMExecuteArgs &exe
 
 #ifndef DIS_DYN_SHAPES
   // Check dynamic shapes
-  if (runtime_storage.getDynamicTensorSize(input1_index) != -1)
-    input1_shape = output_shape;
+  {
+    auto input_1_dynamic_shape = runtime_storage.getDynamicRuntimeShape(input1_index);
+    if (input_1_dynamic_shape.flatSize() != 0)
+      input1_shape = input_1_dynamic_shape;
 
-  if (runtime_storage.getDynamicTensorSize(input2_index) != -1)
-    input2_shape = output_shape;
+    auto input_2_dynamic_shape = runtime_storage.getDynamicRuntimeShape(input2_index);
+    if (input_2_dynamic_shape.flatSize() != 0)
+      input2_shape = input_2_dynamic_shape;
+  }
 #endif // DIS_DYN_SHAPES
 
   // Check broadcast property
   core::BinaryArithmeticBroadcastParams params{};
   const bool need_broadcast = pal::processBroadcastShapes(input1_shape, input2_shape, &params);
-
   switch (input1->type())
   {
 #ifndef DIS_FLOAT
@@ -124,6 +127,7 @@ OMStatus onert_micro::execute::execute_kernel_CircleAdd(const OMExecuteArgs &exe
       }
     }
     break;
+#endif // DIS_FLOAT
     case circle::TensorType_INT64:
     {
       execute::calculateActivationRange(options->fused_activation_function(),
@@ -166,7 +170,31 @@ OMStatus onert_micro::execute::execute_kernel_CircleAdd(const OMExecuteArgs &exe
       }
     }
     break;
-#endif // DIS_FLOAT
+#ifndef DIS_QUANT
+    case circle::TensorType_INT8:
+    {
+      core::ArithmeticQuantParams add_params{};
+
+      calculateQuantParams(add_params, input1, input2, output,
+                           options->fused_activation_function());
+
+      if (need_broadcast)
+      {
+        status = pal::BroadcastAdd4DSlow(
+          add_params, input1_shape, core::utils::castInputData<int8_t>(input1_data), input2_shape,
+          core::utils::castInputData<int8_t>(input2_data), output_shape,
+          core::utils::castOutputData<int8_t>(output_data));
+      }
+      else
+      {
+        status = pal::Add(add_params, input1_shape.flatSize(),
+                          core::utils::castInputData<int8_t>(input1_data),
+                          core::utils::castInputData<int8_t>(input2_data),
+                          core::utils::castOutputData<int8_t>(output_data));
+      }
+    }
+    break;
+#endif // DIF_QUANT
     default:
     {
       status = UnsupportedType;

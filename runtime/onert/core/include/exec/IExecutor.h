@@ -21,27 +21,17 @@
 #ifndef __ONERT_EXEC_I_EXECUTOR_H__
 #define __ONERT_EXEC_I_EXECUTOR_H__
 
+#include "ExecutionContext.h"
+#include "backend/IPortableTensor.h"
 #include "ir/Graph.h"
-#include "IFunction.h"
-#include "IODescription.h"
 #include "ir/Index.h"
+#include "ir/OperandInfo.h"
 #include "ir/OperationIndexMap.h"
 
 #include <cstdint>
 #include <memory>
-#include <unordered_map>
+#include <vector>
 
-namespace onert
-{
-namespace backend
-{
-class IPortableTensor;
-namespace builtin
-{
-class IOTensor;
-}
-} // namespace backend
-} // namespace onert
 namespace onert
 {
 namespace exec
@@ -74,36 +64,63 @@ struct IExecutor
   virtual void setIndexedRanks(std::shared_ptr<ir::OperationIndexMap<int64_t>>) = 0;
 
   /**
-   * @brief     Execute with user-given input/output description (for primary subgraph)
-   * @param[in] desc Input and output description
-   * @note      This method should be thread-safe
-   */
-  virtual void execute(const IODescription &desc) = 0;
-
-  /**
    * @brief Execute with given input/output tensors
    *
-   * For non-primary subgraphs, input and output tensors must be given.
+   * Input and output tensors must be given.
    *
-   * @param[in] inputs tensors that are passed as inputs
-   * @param[in] outputs tensors that are passed as outputs
+   * @param[in] inputs  Tensors that are passed as inputs
+   * @param[in] outputs Tensors that are passed as outputs
+   * @param[in] options Execution options
    */
   virtual void execute(const std::vector<backend::IPortableTensor *> &inputs,
-                       const std::vector<backend::IPortableTensor *> &outputs) = 0;
+                       const std::vector<backend::IPortableTensor *> &outputs,
+                       const ExecutionOptions &options) = 0;
 
   /**
-   * @brief Get input tensor objects
-   *
-   * @return Vector of @c IOTensor
+   * @brief   Get input size
+   * @return  Input size
    */
-  virtual const std::vector<backend::builtin::IOTensor *> &getInputTensors() const = 0;
+  virtual uint32_t inputSize() const = 0;
 
   /**
-   * @brief Get output tensor objects
-   *
-   * @return Vector of @c IOTensor
+   * @brief   Get output size
+   * @return  Output size
    */
-  virtual const std::vector<backend::builtin::IOTensor *> &getOutputTensors() const = 0;
+  virtual uint32_t outputSize() const = 0;
+
+  /**
+   * @brief     Get input info at index
+   * @param[in] index Index of input
+   * @return    Input operand info
+   */
+  virtual const ir::OperandInfo &inputInfo(uint32_t index) const = 0;
+
+  /**
+   * @brief     Get output info at index
+   * @param[in] index Index of output
+   * @return    Output operand info
+   */
+  virtual const ir::OperandInfo &outputInfo(uint32_t index) const = 0;
+
+  /**
+   * @brief     Get input layout at index
+   * @param[in] index Index of input
+   * @return    Input operand layout
+   */
+  virtual ir::Layout inputLayout(uint32_t index) const = 0;
+
+  /**
+   * @brief     Get output layout at index
+   * @param[in] index Index of output
+   * @return    Output operand layout
+   */
+  virtual ir::Layout outputLayout(uint32_t index) const = 0;
+
+  /**
+   * @brief   Return current execution configuration
+   * @return  Current execution configuration
+   */
+  virtual const ExecutionOptions &currentOptions() const = 0;
 };
 
 } // namespace exec

@@ -42,7 +42,7 @@ std::unique_ptr<Tensor> createTransposedWeights(const backend::IPortableTensor *
     ir::Shape{origin_shape.dim(1), origin_shape.dim(2), origin_shape.dim(3), origin_shape.dim(0)};
   transposed_info.shape(transposed_shape);
 
-  return std::make_unique<Tensor>(transposed_info, origin_weights->layout());
+  return std::make_unique<Tensor>(transposed_info);
 }
 
 } // namespace
@@ -65,21 +65,12 @@ ConvolutionLayer::ConvolutionLayer()
 
 ConvolutionLayer::~ConvolutionLayer() = default;
 
-void ConvolutionLayer::configure(
-  const IPortableTensor *input, const IPortableTensor *weights, const IPortableTensor *bias,
-  IPortableTensor *output, IPortableTensor *back_prop_input, IPortableTensor *grad_weights,
-  IPortableTensor *grad_bias, const IPortableTensor *back_prop_output, ir::PaddingType paddingType,
-  const uint32_t paddingLeft, const uint32_t paddingRight, const uint32_t paddingTop,
-  const uint32_t paddingBottom, const uint32_t strideWidth, const uint32_t strideHeight,
-  const uint32_t dilationWidthFactor, const uint32_t dilationHeightFactor,
-  const ir::Activation activation)
+void ConvolutionLayer::configureBackward(const IPortableTensor *weights,
+                                         IPortableTensor *back_prop_input,
+                                         IPortableTensor *grad_weights, IPortableTensor *grad_bias,
+                                         const IPortableTensor *back_prop_output,
+                                         const ir::Activation activation)
 {
-  const bool is_cacheable_weights = false;
-  cpu::ops::ConvolutionLayer::configure(input, weights, bias, paddingType, paddingLeft,
-                                        paddingRight, paddingTop, paddingBottom, strideWidth,
-                                        strideHeight, dilationWidthFactor, dilationHeightFactor,
-                                        activation, output, is_cacheable_weights);
-
   _back_prop_input = back_prop_input;
   _grad_weights = grad_weights;
   _grad_bias = grad_bias;
@@ -93,8 +84,7 @@ void ConvolutionLayer::configure(
   _transposed_weights->setBuffer(
     std::make_shared<basic::Allocator>(_transposed_weights->total_size()));
 
-  _conv_back_prop_output =
-    std::make_unique<BackPropTensor>(back_prop_output->get_info(), back_prop_output->layout());
+  _conv_back_prop_output = std::make_unique<BackPropTensor>(back_prop_output->get_info());
   _conv_back_prop_output->setBuffer(
     std::make_shared<basic::Allocator>(_conv_back_prop_output->total_size()));
 
@@ -104,8 +94,7 @@ void ConvolutionLayer::configure(
 
   if (activation != ir::Activation::NONE)
   {
-    _act_back_prop_output =
-      std::make_unique<BackPropTensor>(_back_prop_output->get_info(), _back_prop_output->layout());
+    _act_back_prop_output = std::make_unique<BackPropTensor>(_back_prop_output->get_info());
     _act_back_prop_output->setBuffer(
       std::make_shared<basic::Allocator>(_act_back_prop_output->total_size()));
   }

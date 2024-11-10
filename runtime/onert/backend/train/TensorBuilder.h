@@ -17,9 +17,13 @@
 #ifndef __ONERT_BACKEND_TRAIN_TENSOR_BUILDER_H__
 #define __ONERT_BACKEND_TRAIN_TENSOR_BUILDER_H__
 
+#include "DisposableTensorIndex.h"
+#include "LayerScopeTensorIndex.h"
 #include "TensorManager.h"
 #include "TensorRegistry.h"
+#include "util/Set.h"
 
+#include <ir/OperationIndexMap.h>
 #include <exec/train/optimizer/Optimizer.h>
 
 namespace onert
@@ -34,36 +38,50 @@ class TensorBuilder
 {
 public:
   TensorBuilder(const std::shared_ptr<TensorRegistry> &tensor_reg,
-                const exec::train::optimizer::Optimizer *optimizer, const std::string planner_id);
+                const exec::train::optimizer::Optimizer *optimizer);
 
   /**
    * @brief     Register tensor information to allocate on train backend
    * @param[in] ind    Operand index
    * @param[in] info   Operand information
-   * @param[in] layout Operand data layout
    */
-  void registerTensorInfo(const ir::OperandIndex &ind, const ir::OperandInfo &info,
-                          ir::Layout backend_layout);
+  void registerTensorInfo(const ir::OperandIndex &ind, const ir::OperandInfo &info);
 
   /**
    * @brief     Register informations of tensor used only in backward to allocate on train backend
    * @param[in] ind    Operand index
    * @param[in] info   Operand information
-   * @param[in] layout Operand data layout
    */
-  void registerBackwardTensorInfo(const ir::OperandIndex &ind, const ir::OperandInfo &info,
-                                  ir::Layout backend_layout);
+  void registerBackwardTensorInfo(const ir::OperandIndex &ind, const ir::OperandInfo &info);
+
+  void registerDisposableBackwardTensorInfo(const DisposableTensorIndex &index,
+                                            const ir::OperandInfo &info);
+
+  void registerLayerScopeTensor(const LayerScopeTensorIndex &index,
+                                std::shared_ptr<LayerScopeTensor> &info);
 
   // TODO Support memory plan of all tensors
   void notifyFirstUse(const ir::OperandIndex &);
   void notifyLastUse(const ir::OperandIndex &);
   void notifyBackwardFirstUse(const ir::OperandIndex &);
+  void notifyBackwardLastUse(const ir::OperandIndex &);
+  void notifyDisposableBackPropFirstUse(const DisposableTensorIndex &);
+  void notifyDisposableBackPropLastUse(const DisposableTensorIndex &);
+  void notifyLayerScopeFirstUse(const LayerScopeTensorIndex &);
+  void notifyLayerScopeLastUse(const LayerScopeTensorIndex &);
 
   bool isRegistered(const ir::OperandIndex &) const;
   bool isRegisteredBackward(const ir::OperandIndex &) const;
+  bool isRegisteredDisposableBackwardTensor(const DisposableTensorIndex &index) const;
+  bool isRegisteredLayerScopeTensor(const ir::OperationIndex &) const;
+
+  const util::Set<LayerScopeTensorIndex> &
+  getRegisteredLayerScopeTensorIndices(const ir::OperationIndex &) const;
+  LayerScopeTensorLifeTime getLayerScopeTensorLifeTime(const LayerScopeTensorIndex &) const;
 
   void allocate(void);
   void allocateBackward(void);
+  void allocateLayerScope(void);
 
 private:
   const std::shared_ptr<TensorRegistry> _tensor_reg;
@@ -71,6 +89,8 @@ private:
   ir::OperandIndexMap<ir::OperandInfo> _tensor_info_map;
   ir::OperandIndexMap<ir::OperandInfo> _backward_tensor_info_map;
   ir::OperandIndexMap<bool> _as_constants;
+  util::Set<DisposableTensorIndex> _disposable_backprops;
+  ir::OperationIndexMap<util::Set<LayerScopeTensorIndex>> _operation_to_layerscope;
   const exec::train::optimizer::Optimizer *_optimizer;
 };
 

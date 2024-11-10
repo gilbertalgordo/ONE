@@ -21,7 +21,7 @@
 
 #include <misc/EnvVar.h>
 #include <misc/fp32.h>
-#include <misc/RandomGenerator.h>
+#include <benchmark/RandomGenerator.h>
 
 #include <tflite/Assert.h>
 #include <tflite/InterpreterSession.h>
@@ -62,7 +62,7 @@ void readData(const std::string &path, std::vector<uint8_t> &dest)
 }
 
 template <typename T>
-void randomData(nnfw::misc::RandomGenerator &randgen, std::vector<uint8_t> &dest)
+void randomData(benchmark::RandomGenerator &randgen, std::vector<uint8_t> &dest)
 {
   size_t elements = dest.size() / sizeof(T);
   assert(dest.size() % sizeof(T) == 0);
@@ -75,7 +75,7 @@ void randomData(nnfw::misc::RandomGenerator &randgen, std::vector<uint8_t> &dest
   memcpy(dest.data(), vec.data(), elements * sizeof(T));
 }
 
-void randomBoolData(nnfw::misc::RandomGenerator &randgen, std::vector<uint8_t> &dest)
+void randomBoolData(benchmark::RandomGenerator &randgen, std::vector<uint8_t> &dest)
 {
   size_t elements = dest.size();
   std::vector<uint8_t> vec(elements);
@@ -168,6 +168,31 @@ bool isClose<float>(const float *ref_buf, const std::vector<uint8_t> &act_buf, u
   return match;
 }
 
+template <>
+bool isClose(const uint8_t *ref_buf, const std::vector<uint8_t> &act_buf, uint32_t index)
+{
+  // TODO better way for handling quant error?
+  auto tolerance = static_cast<uint64_t>(nnfw::misc::EnvVar("TOLERANCE").asInt(0));
+  bool match = true;
+
+  for (uint32_t e = 0; e < act_buf.size() / sizeof(uint8_t); e++)
+  {
+    // Calculate diff by int64_t type to print value, not character (uint8_t)
+    int32_t ref = ref_buf[e];
+    int32_t act = reinterpret_cast<const uint8_t *>(act_buf.data())[e];
+    int32_t diff = static_cast<int32_t>(((ref > act) ? (ref - act) : (act - ref)));
+
+    if (ref != act && diff > tolerance)
+    {
+      std::cerr << "Output #" << index << ", Element Index : " << e << ", ref: " << ref
+                << ", act: " << act << " (diff: " << diff << ")" << std::endl;
+      match = false;
+    }
+  }
+
+  return match;
+}
+
 bool exact(const uint8_t *ref_buf, const std::vector<uint8_t> &act_buf, uint32_t index)
 {
   bool match = true;
@@ -242,7 +267,7 @@ int main(const int argc, char **argv)
   }
 
   const int seed = 1; /* TODO Add an option for seed value */
-  nnfw::misc::RandomGenerator randgen{seed, 0.0f, 2.0f};
+  benchmark::RandomGenerator randgen{seed, 0.0f, 2.0f};
 
   for (uint32_t i = 0; i < num_inputs; i++)
   {

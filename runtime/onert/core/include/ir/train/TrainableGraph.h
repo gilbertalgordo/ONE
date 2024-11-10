@@ -22,6 +22,7 @@
 
 #include "ir/Graph.h"
 #include "ir/train/ITrainableOperation.h"
+#include "ir/train/UseDefChains.h"
 
 namespace onert
 {
@@ -30,6 +31,7 @@ namespace ir
 namespace train
 {
 
+// TODO Add Phase enum
 class TrainableGraph : public IGraph
 {
 public:
@@ -104,11 +106,13 @@ public:
   void addLoss(const OperandIndex &loss_ind, const IOIndex &pred_io_ind);
   void verify() const;
   void removeOperand(const OperandIndex &ind);
-  void setLayout(Layout layout);
   void setInputs(OperandIndexSequence inputs,
                  std::unordered_map<std::string, IOIndex> name_to_input);
   void setOutputs(OperandIndexSequence outputs,
                   std::unordered_map<std::string, IOIndex> name_to_output);
+  void enableBackward(const OperationIndex &index);
+  void disableBackward(const OperationIndex &index);
+  void setTrainingUseDefs(const UseDefChains &training_defuses);
 
   // Accessors
 public:
@@ -121,28 +125,47 @@ public:
   const Operations &operations() const override { return _graph.operations(); }
   const Operands &backward_operands() const { return _backward_operands; }
   OperandIndex getLossIndex(const IOIndex &pred_io_ind) const;
-  Layout layout() const { return _graph.layout(); }
   const Graph &graph() const { return _graph; }
 
 public:
   const ITrainableOperation &operation(OperationIndex index) const;
+  const UseDefChains &trainingUseDefs() const { return _training_defuses; }
 
 private:
   void validateTopologicalOrder(std::vector<ir::OperationIndex> order, bool is_forward) const;
   void validateForwardTopologicalOrder(const std::vector<ir::OperationIndex> &order) const;
   void validateBackwardTopologicalOrder(const std::vector<ir::OperationIndex> &order) const;
+  void verifyTrainingUseDefs() const;
 
 public:
   std::vector<ir::OperationIndex> topolSortOperations() const;
   std::vector<ir::OperationIndex> btopolSortOperations() const;
+  std::vector<ir::OperationIndex> essentialBackwardOrder() const;
 
 public:
+  /**
+   * @brief Truncate the backward order of operations in accordance with the alive condition
+   *        whether the corresponding operation has trainable parameters
+   * @param  backward_order  The order of operations in a backward graph
+   */
   std::vector<ir::OperationIndex>
-  truncateBackwardOrder(std::vector<ir::OperationIndex> backward_order) const;
+  truncateBackwardOrder(const std::vector<ir::OperationIndex> &backward_order) const;
+  /**
+   * @brief Truncate the backward order of operations in accordance with the given alive condition.
+   * @param  backward_order  The order of operations in a backward graph
+   * @param  alive_cond The alive condition to stop the backward order
+   */
+  std::vector<ir::OperationIndex>
+  truncateBackwardOrder(std::vector<ir::OperationIndex> backward_order,
+                        std::function<bool(const ir::OperationIndex &)> truncating_cond) const;
+
+public:
+  void updateGraphDependency();
 
 private:
   Graph _graph;
   Operands _backward_operands;
+  UseDefChains _training_defuses;
 
   std::unordered_map<IOIndex, OperandIndex> _losses;
 };

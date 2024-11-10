@@ -32,9 +32,6 @@ using namespace onert_micro::execute;
 namespace
 {
 
-constexpr uint32_t numInput = 3;
-constexpr uint32_t numOutput = 1;
-
 constexpr uint32_t inputTensorIdx = 0;
 constexpr uint32_t weightTensorIdx = 1;
 constexpr uint32_t biasTensorIdx = 2;
@@ -69,9 +66,9 @@ void calculateOpDataFullyConnected(const circle::Tensor *input, const circle::Te
   const float weight_scale = *weights->quantization()->scale()->begin();
   const float output_scale = *output->quantization()->scale()->begin();
 
-  const float input_zero_point = *input->quantization()->zero_point()->begin();
-  const float weights_zero_point = *weights->quantization()->zero_point()->begin();
-  const float output_zero_point = *output->quantization()->zero_point()->begin();
+  const long input_zero_point = *input->quantization()->zero_point()->begin();
+  const long weights_zero_point = *weights->quantization()->zero_point()->begin();
+  const long output_zero_point = *output->quantization()->zero_point()->begin();
 
   real_multiplier =
     execute::getQuantizedConvolutionMultipler(input_scale, weight_scale, output_scale);
@@ -144,24 +141,48 @@ onert_micro::execute::execute_kernel_CircleFullyConnected(const OMExecuteArgs &e
 #ifndef DIS_FLOAT
     case circle::TensorType_FLOAT32:
     {
-      FullyConnectedParams params;
+      FullyConnectedParams params{};
       status = calculateActivationRange(options->fused_activation_function(),
                                         &params.float_activation_min, &params.float_activation_max);
       if (status != Ok)
         return status;
 
-      status =
-        pal::FullyConnected(params, core::utils::castInputData<float>(input_data),
-                            OMRuntimeShape(weight), core::utils::castInputData<float>(weight_data),
-                            core::utils::castInputData<float>(bias_data), OMRuntimeShape(output),
-                            core::utils::castOutputData<float>(output_data));
+      switch (weight->type())
+      {
+        case circle::TensorType_FLOAT32:
+        {
+
+          status = pal::FullyConnected(
+            params, core::utils::castInputData<float>(input_data), OMRuntimeShape(weight),
+            core::utils::castInputData<float>(weight_data),
+            core::utils::castInputData<float>(bias_data), OMRuntimeShape(output),
+            core::utils::castOutputData<float>(output_data));
+        }
+        break;
+        case circle::TensorType_INT8:
+        {
+          // weight quantized INT8 mode
+          params.weights_scales =
+            reinterpret_cast<const float *>(weight->quantization()->scale()->data());
+          params.is_channel_wise_quant = weight->quantization()->scale()->size() > 1;
+
+          status = pal::FullyConnected(
+            params, core::utils::castInputData<float>(input_data), OMRuntimeShape(weight),
+            core::utils::castInputData<int8_t>(weight_data),
+            core::utils::castInputData<float>(bias_data), OMRuntimeShape(output),
+            core::utils::castOutputData<float>(output_data));
+        }
+        break;
+        default:
+          assert(false && "Unsupported hybrid weight type");
+      }
     }
     break;
 #endif // DIS_FLOAT
 #ifndef DIS_QUANT
     case circle::TensorType_INT8:
     {
-      FullyConnectedParams op_params;
+      FullyConnectedParams op_params{};
 
       calculateOpDataFullyConnected(input, weight, output, options->fused_activation_function(),
                                     op_params);
@@ -175,7 +196,7 @@ onert_micro::execute::execute_kernel_CircleFullyConnected(const OMExecuteArgs &e
     break;
     case circle::TensorType_INT16:
     {
-      FullyConnectedParams op_params;
+      FullyConnectedParams op_params{};
 
       calculateOpDataFullyConnected(input, weight, output, options->fused_activation_function(),
                                     op_params);

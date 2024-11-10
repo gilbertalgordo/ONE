@@ -116,9 +116,12 @@ NNFW_STATUS nnfw_output_tensorindex(nnfw_session *session, const char *tensornam
  */
 NNFW_STATUS nnfw_set_backends_per_operation(nnfw_session *session, const char *backend_settings);
 
-/*
- * Prepare session to be ready for inference
+/**
+ * @brief Prepare session to be ready for inference
+ *
  * This phase may finalize model compilation, scheduling, and additional settings.
+ *
+ * @deprecated Deprecated since 1.22.1
  *
  * @param session the session to be prepared
  * @return NNFW_STATUS_NO_ERROR if successful
@@ -131,6 +134,8 @@ NNFW_STATUS nnfw_prepare_pipeline(nnfw_session *session, const char *map_file_pa
  * This function must be called after {@link nnfw_prepare_pipeline}, \p inputs given to this
  * function can be reused for many inferences. \p lengths must be greater or equal than the operand
  * requires. if you give empty \p inputs to this function, then this function will join all threads.
+ *
+ * @deprecated Deprecated since 1.22.1
  *
  * @param[in] session Session to the input is to be set
  * @param[in] inputs  Raw buffers for input, it must be \p std::vector<void *> type pointer for
@@ -147,6 +152,8 @@ NNFW_STATUS nnfw_push_pipeline_input(nnfw_session *session, void *inputs, void *
  *
  * This function must be called after {@link nnfw_prepare_pipeline}, \p outputs given to this
  * function must be cleared for memory management.
+ *
+ * @deprecated Deprecated since 1.22.1
  *
  * @param[in]   session Session from last outputs is to be extracted
  * @param[out]  outputs Raw buffer for outputs, it must be \p std::vector<void *> type pointer for
@@ -205,6 +212,21 @@ typedef struct nnfw_loss_info
 } nnfw_loss_info;
 
 /**
+ * @brief Special values of num_of_trainable_ops.
+ *        Positive values are used to indicate layers to be trained from the back of the graph.
+ */
+typedef enum
+{
+  /** Error value of number of trainable ops */
+  NNFW_TRAIN_TRAINABLE_INCORRECT_STATE = -2,
+  /** All layers will be trained */
+  NNFW_TRAIN_TRAINABLE_ALL = -1,
+  /** No layer will be trained */
+  NNFW_TRAIN_TRAINABLE_NONE = 0,
+
+} NNFW_TRAIN_NUM_OF_TRAINABLE_OPS_SPECIAL_VALUES;
+
+/**
  * @brief Training information to prepare training
  * @todo  Add more training information
  *        (e.g. optimizer, loss function, ...)
@@ -215,11 +237,24 @@ typedef struct nnfw_train_info
   float learning_rate = 0.001f;
   /** Batch size */
   uint32_t batch_size = 1;
-  /** loss info */
+  /** loss info
+   * Note that you don't need to worry about whether the model you use does not include softmax
+   * when you try to use NNFW_TRAIN_LOSS_CATEGORICAL_CROSSENTROPY. Using
+   * NNFW_TRAIN_LOSS_CATEGORICAL_CROSSENTROPY will ensure that the predicted input of loss is
+   * the result of performing softmax once regardless of whether the output of the model is
+   * the result of softmax or not.
+   */
   nnfw_loss_info loss_info{.loss = NNFW_TRAIN_LOSS_MEAN_SQUARED_ERROR,
                            .reduction_type = NNFW_TRAIN_LOSS_REDUCTION_SUM_OVER_BATCH_SIZE};
   /** optimizer type */
   NNFW_TRAIN_OPTIMIZER opt = NNFW_TRAIN_OPTIMIZER_SGD;
+
+  /** Number of layers to be trained from the back of the graph.
+   *  Note that some values have special meaning. "-1" means that all layers will be trained.
+   * "0" means that no layer will be trained. Negative value less than -1 means error.
+   *  The special values are collected in NNFW_TRAIN_NUM_OF_TRAINABLE_OPS_SPECIAL_VALUES enum.
+   */
+  int32_t num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_NONE;
 } nnfw_train_info;
 
 /**
@@ -346,6 +381,28 @@ NNFW_STATUS nnfw_train_get_loss(nnfw_session *session, uint32_t index, float *lo
  */
 NNFW_STATUS nnfw_train_export_circle(nnfw_session *session, const char *path);
 
+/**
+ * @brief Import circle checkpoint
+ * @note  This function should be called on training mode
+ *        This function should be called before {@link nnfw_train}
+ *
+ * @param[in] session The session to export a checkpoint
+ * @param[in] path    The path to export a checkpoint
+ * @return @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_train_import_checkpoint(nnfw_session *session, const char *path);
+
+/**
+ * @brief Export circle checkpoint
+ * @note  This function should be called on training mode
+ *        This function should be called after {@link nnfw_train}
+ *
+ * @param[in] session The session to export a checkpoint
+ * @param[in] path    The path to export a checkpoint
+ * @return @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_train_export_checkpoint(nnfw_session *session, const char *path);
+
 //////////////////////////////////////////////
 // Optional APIs for training
 //////////////////////////////////////////////
@@ -412,6 +469,11 @@ typedef enum
   NNFW_QUANTIZE_TYPE_U8_ASYM,
   /** symmetric quantization with a scale only */
   NNFW_QUANTIZE_TYPE_I16_SYM,
+  /** weight-only int8 symmetric quantization */
+  NNFW_QUANTIZE_TYPE_WO_I8_SYM,
+  /** weight-only int16 symmetric quantization */
+  NNFW_QUANTIZE_TYPE_WO_I16_SYM,
+
 } NNFW_QUANTIZE_TYPE;
 
 /**
@@ -495,6 +557,92 @@ NNFW_STATUS nnfw_set_codegen_model_path(nnfw_session *session, const char *path)
  * @return    @c NNFW_STATUS_NO_ERROR if successful, otherwise return @c NNFW_STATUS_ERROR
  */
 NNFW_STATUS nnfw_codegen(nnfw_session *session, const char *target, NNFW_CODEGEN_PREF pref);
+
+//////////////////////////////////////////////
+// APIs for configuration
+//////////////////////////////////////////////
+
+/**
+ * @brief Configuration key for prepare (compile and schedule)
+ */
+typedef enum
+{
+  /**
+   * Prepare to dump execution time profile file (not require value setting)
+   * TODO: Use workspace
+   */
+  NNFW_PREPARE_CONFIG_PROFILE,
+} NNFW_PREPARE_CONFIG;
+
+/**
+ * @brief      Set prepare configuration
+ *
+ * This function set prepare configuration to decide additional compiling and scheduing feature.
+ * If you enable configuration to prepare dumping execution data into workspace,
+ * refer {@link nnfw_set_workspace} to use workspace directory.
+ *
+ * @param[in] session nnfw_session to set prepare configuration
+ * @param[in] key     prepare configuration key
+ * @param[in] value   prepare configuration value
+ * @return    @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_set_prepare_config(nnfw_session *session, NNFW_PREPARE_CONFIG key,
+                                    const char *value);
+
+/**
+ * @brief     Reset prepare configurations
+ *
+ * This function reset all prepare configuration.
+ *
+ * @param[in] session nnfw_session to reset all prepare configurations
+ * @return    @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_reset_prepare_config(nnfw_session *session);
+
+/**
+ * @brief Configuration key for execution
+ */
+typedef enum
+{
+  /** Dump minmax data for each layers to workspace (not require value setting) */
+  NNFW_RUN_CONFIG_DUMP_MINMAX,
+  /** Dump execution event file to workspace (not require value setting) */
+  NNFW_RUN_CONFIG_TRACE,
+  /**
+   * Dump execution time profile file (not require value setting)
+   *
+   * You should set prepare configuration {@link NNFW_PREPARE_CONFIG_PROFILE} before prepare.
+   * Otherwise, this configuration will be ignored.
+   *
+   * TODO: Use workspace
+   */
+  NNFW_RUN_CONFIG_PROFILE,
+} NNFW_RUN_CONFIG;
+
+/**
+ * @brief     Set execution (run or train) configuration
+ *
+ * This function set execution configuration to dump execution data to workspace.
+ * If you enable configuration to dump execution data into workspace and want to change workspace,
+ * refer {@link nnfw_set_workspace} to use workspace directory.
+ *
+ * @param[in] session nnfw_session to set execution configuration
+ * @param[in] key     execution configuration key
+ * @param[in] value   execution configuration value if needed, otherwise set NULL
+ * @return    @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_set_execute_config(nnfw_session *session, const NNFW_RUN_CONFIG key,
+                                    const char *value);
+
+/**
+ * @brief     Reset execution (run or train) configurations
+ *
+ * This function reset all execution configuration.
+ *
+ * @param[in] session nnfw_session to reset all execution configurations
+ * @return    @c NNFW_STATUS_NO_ERROR if successful
+ */
+NNFW_STATUS nnfw_reset_execute_config(nnfw_session *session);
 
 #ifdef __cplusplus
 }

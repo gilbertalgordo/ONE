@@ -36,6 +36,7 @@ class CustomKernelRegistry;
 namespace exec
 {
 class Execution;
+struct ExecutionOptions;
 } // namespace exec
 namespace ir
 {
@@ -50,7 +51,7 @@ class TrainingInfo;
 namespace compiler
 {
 struct CompilerArtifact;
-class CompilerOptions;
+struct CompilerOptions;
 } // namespace compiler
 namespace odc
 {
@@ -123,7 +124,6 @@ public:
   ~nnfw_session();
   NNFW_STATUS load_model_from_nnpackage(const char *package_file_path);
   NNFW_STATUS prepare();
-  NNFW_STATUS prepare_pipeline(const char *map_file_path);
   NNFW_STATUS run();
 
   NNFW_STATUS run_async();
@@ -138,14 +138,16 @@ public:
   NNFW_STATUS set_input_layout(uint32_t index, NNFW_LAYOUT layout);
   NNFW_STATUS set_output_layout(uint32_t index, NNFW_LAYOUT layout);
 
-  NNFW_STATUS apply_tensorinfo(uint32_t index, nnfw_tensorinfo ti); // Will be deprecated
   NNFW_STATUS set_input_tensorinfo(uint32_t index, const nnfw_tensorinfo *ti);
 
   NNFW_STATUS input_tensorinfo(uint32_t index, nnfw_tensorinfo *ti);
   NNFW_STATUS output_tensorinfo(uint32_t index, nnfw_tensorinfo *ti);
 
   NNFW_STATUS set_available_backends(const char *backends);
-  NNFW_STATUS set_op_backend(const char *op, const char *backend);
+
+  NNFW_STATUS set_workspace(const char *dir);
+
+  static NNFW_STATUS deprecated(const char *msg);
 
   //
   // Internal-only API
@@ -159,9 +161,6 @@ public:
   //
   // Experimental API
   //
-  NNFW_STATUS push_pipeline_input(std::vector<void *> *inputs, std::vector<uint32_t> *lengths);
-  NNFW_STATUS pop_pipeline_output(std::vector<void *> *outputs);
-
   NNFW_STATUS register_custom_operation(const std::string &id, nnfw_custom_eval eval_func);
   NNFW_STATUS input_tensorindex(const char *tensorname, uint32_t *index);
   NNFW_STATUS output_tensorindex(const char *tensorname, uint32_t *index);
@@ -184,6 +183,9 @@ public:
   NNFW_STATUS train_run(bool update_weights);
   NNFW_STATUS train_get_loss(uint32_t index, float *loss);
   NNFW_STATUS train_export_circle(const char *path);
+  NNFW_STATUS train_export_circleplus(const char *path);
+  NNFW_STATUS train_import_checkpoint(const char *path);
+  NNFW_STATUS train_export_checkpoint(const char *path);
 
   NNFW_STATUS set_quantization_type(NNFW_QUANTIZE_TYPE qtype);
   NNFW_STATUS set_quantized_model_path(const char *path);
@@ -192,10 +194,16 @@ public:
   NNFW_STATUS set_codegen_model_path(const char *path);
   NNFW_STATUS codegen(const char *target, NNFW_CODEGEN_PREF pref);
 
+  NNFW_STATUS set_prepare_config(const NNFW_PREPARE_CONFIG key, const char *value);
+  NNFW_STATUS reset_prepare_config();
+  NNFW_STATUS set_execute_config(const NNFW_RUN_CONFIG key, const char *value);
+  NNFW_STATUS reset_execute_config();
+
 private:
   const onert::ir::IGraph *primary_subgraph();
   uint32_t getInputSize();
   uint32_t getOutputSize();
+  NNFW_STATUS loadModelFile(const std::string &model_file_path, const std::string &model_type);
 
   bool isStateInitialized();
   bool isStateModelLoaded();
@@ -210,7 +218,7 @@ private:
 private:
   State _state{State::INITIALIZED};
   std::shared_ptr<onert::ir::NNPkg> _nnpkg;
-  std::vector<std::unique_ptr<onert::compiler::CompilerOptions>> _coptions;
+  std::unique_ptr<onert::compiler::CompilerOptions> _coptions;
   std::shared_ptr<onert::compiler::CompilerArtifact> _compiler_artifact;
   std::unique_ptr<onert::exec::Execution> _execution;
   std::shared_ptr<onert::api::CustomKernelRegistry> _kernel_registry;

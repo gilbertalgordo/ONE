@@ -5,7 +5,7 @@
 Install required packages
 
 ```
-$ sudo apt-get install qemu qemu-user-static binfmt-support debootstrap
+$ sudo apt-get install qemu-user-static binfmt-support debootstrap
 ```
 
 Use `install_rootfs.sh` script to prepare Root File System. You should have `sudo`
@@ -14,7 +14,7 @@ Use `install_rootfs.sh` script to prepare Root File System. You should have `sud
 $ sudo ./tools/cross/install_rootfs.sh arm
 ```
 - supports `arm`(default) and `aarch64` architecutre for now
-- supports `bionic`, `focal`, and `jammy` release
+- supports `focal`,`jammy`, and `noble` release
 
 To see the options,
 ```
@@ -136,10 +136,10 @@ Makefile.template will pass crossbuild toolchain setting to cmake automatically 
 
 To run and test the cross-compiled runtime, you need to install library packages and copy the compiled output to the target device of the architecture in which it is executable.
 
-1. Install hdf5 and boost library package
+1. Install hdf5 library package
 
 ```
-$ sudo apt install libhdf5-dev libboost-system-dev libboost-program-options-dev
+$ sudo apt install libhdf5-dev
 ```
 
 2. Copy all artifacts under the `./Product/armv7l-linux.<BUILD_TYPE>` folder to the target device, Odroid-XU4 for example, as a whole.

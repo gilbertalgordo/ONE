@@ -32,18 +32,15 @@ namespace compiler
 
 struct ManualSchedulerOptions
 {
-public:
   void setBackendMap(const std::string &str);
 
-public:
   std::string backend_for_all;
   std::unordered_map<ir::OpCode, std::string> opcode_to_backend;
   std::unordered_map<ir::OperationIndex, std::string> index_to_backend;
 };
 
-class CompilerOptions
+struct CompilerOptions
 {
-public:
   /**
    * @brief   Set default values for CompilerOptions
    * @return  Generated CompileOption
@@ -52,11 +49,6 @@ public:
    *          when we stop supporting Android NNAPI.
    */
   static std::unique_ptr<CompilerOptions> fromGlobalConfig();
-
-  /**
-   * @brief Allow to compute float32 using float16 data type
-   */
-  void enableToFp16() { fp16_enable = true; }
 
   /**
    * @brief Force default values of CompilerOptions for correct compilations
@@ -71,19 +63,17 @@ public:
    */
   void verboseOptions();
 
-public:
   // GENERAL OPTIONS
   std::vector<std::string> backend_list;
-  std::string minmax_filepath; //< File path to save minmax
 
   // OPTIONS ONLY FOR DEBUGGING/PROFILING
-  std::string trace_filepath; //< File path to save trace records
-  int graph_dump_level;       //< Graph dump level, values between 0 and 2 are valid
-  std::string executor;       //< Executor name to use
+  int graph_dump_level; //< Graph dump level, values between 0 and 2 are valid
+  std::string executor; //< Executor name to use
   ManualSchedulerOptions manual_scheduler_options; //< Options for ManualScheduler
-  bool he_scheduler;      //< HEScheduler if true, ManualScheduler otherwise
-  bool he_profiling_mode; //< Whether HEScheduler profiling mode ON/OFF
-  bool fp16_enable;       //< Whether fp16 mode ON/OFF
+  bool he_scheduler;         //< HEScheduler if true, ManualScheduler otherwise
+  bool he_profiling_mode;    //< Whether HEScheduler profiling mode ON/OFF
+  bool fp16_enable;          //< Whether fp16 mode ON/OFF
+  std::string workspace_dir; //< Workspace directory path
 };
 
 } // namespace compiler

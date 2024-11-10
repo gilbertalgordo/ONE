@@ -1,3 +1,0 @@
-# {FILES_TO_INSTALL} {DEST_DIR}
-# lib
-usr/lib/*.so usr/lib/

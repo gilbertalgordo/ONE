@@ -31,42 +31,21 @@ int32_t const Shape::kUnspecifiedDim = -1;
 // NNFW_MAX_RANK is 6
 int32_t const Shape::kMaxRank = 6;
 
-FeatureShape Shape::asFeature(Layout layout) const
+FeatureShape Shape::asFeature() const
 {
   assert(rank() == 4);
 
-  if (layout == Layout::NHWC)
-  {
-    // Feature Map in NHWC layout
-    //  - Dimension(0) -> Batch
-    //  - Dimension(1) -> Height
-    //  - Dimension(2) -> Width
-    //  - Dimension(3) -> Depth
-    const auto batch = dim(0);
-    const auto depth = dim(3);
-    const auto height = dim(1);
-    const auto width = dim(2);
+  // Feature Map in NHWC layout
+  //  - Dimension(0) -> Batch
+  //  - Dimension(1) -> Height
+  //  - Dimension(2) -> Width
+  //  - Dimension(3) -> Depth
+  const auto batch = dim(0);
+  const auto depth = dim(3);
+  const auto height = dim(1);
+  const auto width = dim(2);
 
-    return {batch, depth, height, width};
-  }
-  else if (layout == Layout::NCHW)
-  {
-    // Feature Map in NHWC layout
-    //  - Dimension(0) -> Batch
-    //  - Dimension(1) -> Depth
-    //  - Dimension(2) -> Height
-    //  - Dimension(3) -> Width
-    const auto batch = dim(0);
-    const auto depth = dim(1);
-    const auto height = dim(2);
-    const auto width = dim(3);
-
-    return {batch, depth, height, width};
-  }
-  else
-  {
-    throw std::runtime_error("Wrong Layout");
-  }
+  return {batch, depth, height, width};
 }
 
 // Extended dimension is filled with 1.
@@ -87,29 +66,29 @@ uint64_t Shape::num_elements() const
                          std::multiplies<uint64_t>());
 }
 
-Shape permuteShape(const Shape &shape, Layout from, Layout to)
+Shape convertShape(const Shape &shape, const PermuteType &type)
 {
   assert(shape.rank() <= Shape::kMaxRank);
   Shape ret{shape};
-  if (from == to)
+
+  if (type == ir::PermuteType::COPY || shape.rank() < 4)
     return ret;
-  if (shape.rank() < 4)
-    return ret;
+
   // Permutation changing layout beyond 4-D is not supported yet
   assert(shape.rank() <= 4);
-  if (from == Layout::NHWC && to == Layout::NCHW)
+
+  if (type == ir::PermuteType::NHWC_TO_NCHW)
   {
     ret.dim(1) = shape.dim(3);
     ret.dim(2) = shape.dim(1);
     ret.dim(3) = shape.dim(2);
+    return ret;
   }
-  else if (from == Layout::NCHW && to == Layout::NHWC)
-  {
-    ret.dim(1) = shape.dim(2);
-    ret.dim(2) = shape.dim(3);
-    ret.dim(3) = shape.dim(1);
-  }
-  // Other cases(either `from` or `to` is UNKNOWN), just return the original shape
+
+  assert(type == ir::PermuteType::NCHW_TO_NHWC);
+  ret.dim(1) = shape.dim(2);
+  ret.dim(2) = shape.dim(3);
+  ret.dim(3) = shape.dim(1);
   return ret;
 }
 

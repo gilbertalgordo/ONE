@@ -193,10 +193,22 @@ TEST_F(ValidationTestAddModelLoaded, neg_experimental_output_no_such_name)
   ASSERT_EQ(ind, 999);
 }
 
+TEST_F(ValidationTestAddModelLoaded, set_backends_per_operation)
+{
+  NNFW_ENSURE_SUCCESS(nnfw_set_backends_per_operation(_session, "0=cpu;1=acl_cl"));
+  SUCCEED();
+}
+
+TEST_F(ValidationTestAddModelLoaded, neg_set_backends_per_operation)
+{
+  EXPECT_EQ(nnfw_set_backends_per_operation(_session, nullptr), NNFW_STATUS_ERROR);
+  EXPECT_EQ(nnfw_set_backends_per_operation(_session, "0?cpu;1?acl_cl"), NNFW_STATUS_ERROR);
+  EXPECT_EQ(nnfw_set_backends_per_operation(_session, "0=cpu:1=acl_cl"), NNFW_STATUS_ERROR);
+}
+
 TEST_F(ValidationTestAddModelLoaded, debug_set_config)
 {
   // At least one test for all valid keys
-  NNFW_ENSURE_SUCCESS(nnfw_set_config(_session, "TRACE_FILEPATH", ""));
   NNFW_ENSURE_SUCCESS(nnfw_set_config(_session, "GRAPH_DOT_DUMP", "0"));
   NNFW_ENSURE_SUCCESS(nnfw_set_config(_session, "GRAPH_DOT_DUMP", "1"));
   NNFW_ENSURE_SUCCESS(nnfw_set_config(_session, "GRAPH_DOT_DUMP", "2"));
@@ -243,4 +255,26 @@ TEST_F(ValidationTestAddModelLoaded, neg_debug_get_config)
   // wrong keys
   ASSERT_EQ(nnfw_get_config(_session, "", buf, sizeof(buf)), NNFW_STATUS_ERROR);
   ASSERT_EQ(nnfw_get_config(_session, "BAD_KEY", buf, sizeof(buf)), NNFW_STATUS_ERROR);
+}
+
+TEST_F(ValidationTestAddModelLoaded, neg_set_workspace)
+{
+  // Call after prepare
+  EXPECT_EQ(nnfw_set_workspace(_session, "."), NNFW_STATUS_INVALID_STATE);
+}
+
+TEST_F(ValidationTestAddModelLoaded, set_prepare_config)
+{
+  NNFW_ENSURE_SUCCESS(nnfw_set_prepare_config(_session, NNFW_PREPARE_CONFIG_PROFILE, nullptr));
+  SUCCEED();
+}
+
+TEST_F(ValidationTestAddModelLoaded, neg_set_execute_config)
+{
+  EXPECT_EQ(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_DUMP_MINMAX, nullptr),
+            NNFW_STATUS_INVALID_STATE);
+  EXPECT_EQ(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_TRACE, nullptr),
+            NNFW_STATUS_INVALID_STATE);
+  EXPECT_EQ(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_PROFILE, nullptr),
+            NNFW_STATUS_INVALID_STATE);
 }

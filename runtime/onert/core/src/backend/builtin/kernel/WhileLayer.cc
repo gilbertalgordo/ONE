@@ -63,18 +63,17 @@ void WhileLayer::run()
   auto body_exec = _executors->at(_model_index, _body_subg_index);
 
   // Need a temp tensor to hold the cond subgraph output
-  assert(cond_exec->getOutputTensors().size() == 1);
+  assert(cond_exec->outputSize() == 1);
   auto cond_output_tensor = [&]() {
-    auto cond_output = cond_exec->getOutputTensors().at(0);
-    auto tensor = std::make_unique<Tensor>(cond_output->orig_info(), cond_output->orig_layout(),
-                                           _dyn_memory_manager);
+    auto tensor = std::make_unique<Tensor>(cond_exec->outputInfo(0), _dyn_memory_manager);
     tensor->set_dynamic();
     tensor->setBuffer(_dyn_memory_manager->allocate(tensor.get(), tensor->total_size()));
     return tensor;
   }();
 
   VERBOSE(While) << "Call to $" << _cond_subg_index << " (cond)" << std::endl;
-  cond_exec->execute(_input_tensors, {cond_output_tensor.get()});
+  const auto &options = _executors->entryExecutor()->currentOptions();
+  cond_exec->execute(_input_tensors, {cond_output_tensor.get()}, options);
   VERBOSE(While) << "Return from $" << _cond_subg_index << std::endl;
 
   auto getResultCond = [](backend::ITensor *tensor) -> bool {
@@ -85,10 +84,15 @@ void WhileLayer::run()
 
   std::vector<ITensor *> op_inputs(_input_tensors.begin(), _input_tensors.end());
   std::vector<ITensor *> op_outputs(_output_tensors.begin(), _output_tensors.end());
+  std::vector<ir::PermuteType> permute_types;
+  // Layout in graph is always NHWC, so layout is not changed
+  for (uint32_t i = 0; i < op_outputs.size(); i++)
+    permute_types.emplace_back(ir::PermuteType::COPY);
   // Copying body inputs to outputs when the loop body is never executed
   if (!getResultCond(cond_output_tensor.get()))
   {
-    PermuteLayer copy_body_inputs_to_op_outputs{op_inputs, op_outputs, _external_context};
+    PermuteLayer copy_body_inputs_to_op_outputs{op_inputs, op_outputs, permute_types,
+                                                _external_context};
     copy_body_inputs_to_op_outputs.run();
     return;
   }
@@ -96,10 +100,9 @@ void WhileLayer::run()
   // Need some temp tensors to hold the body subgraph output
   std::vector<std::unique_ptr<Tensor>> temp_outputs_o;
   std::vector<IPortableTensor *> temp_outputs;
-  for (auto &&io_tensor : body_exec->getOutputTensors())
+  for (uint32_t i = 0; i < body_exec->outputSize(); i++)
   {
-    auto tensor = std::make_unique<Tensor>(io_tensor->orig_info(), io_tensor->orig_layout(),
-                                           _dyn_memory_manager);
+    auto tensor = std::make_unique<Tensor>(body_exec->outputInfo(i), _dyn_memory_manager);
     tensor->set_dynamic();
     tensor->setBuffer(_dyn_memory_manager->allocate(tensor.get(), tensor->total_size()));
     temp_outputs.push_back(tensor.get());
@@ -107,24 +110,25 @@ void WhileLayer::run()
   }
 
   std::vector<ITensor *> body_outputs(temp_outputs.begin(), temp_outputs.end());
-  PermuteLayer copy_body_outputs_to_op_outputs{body_outputs, op_outputs, _external_context};
+  PermuteLayer copy_body_outputs_to_op_outputs{body_outputs, op_outputs, permute_types,
+                                               _external_context};
 
   const auto body_execute_with_op_inputs = [&]() {
     VERBOSE(While) << "Call to $" << _body_subg_index << " (body)" << std::endl;
-    body_exec->execute(_input_tensors, temp_outputs);
+    body_exec->execute(_input_tensors, temp_outputs, options);
     VERBOSE(While) << "Return from $" << _body_subg_index << std::endl;
   };
 
   const auto body_execute_with_body_outputs = [&]() {
     VERBOSE(While) << "Call to $" << _body_subg_index << " (body)" << std::endl;
-    body_exec->execute(_output_tensors, temp_outputs);
+    body_exec->execute(_output_tensors, temp_outputs, options);
     VERBOSE(While) << "Return from $" << _body_subg_index << std::endl;
   };
 
   std::function<void()> body_execute = body_execute_with_op_inputs;
   const auto cond_execute = [&]() {
     VERBOSE(While) << "Call to $" << _cond_subg_index << " (cond)" << std::endl;
-    cond_exec->execute(_output_tensors, {cond_output_tensor.get()});
+    cond_exec->execute(_output_tensors, {cond_output_tensor.get()}, options);
     VERBOSE(While) << "Return from $" << _cond_subg_index << std::endl;
   };
 

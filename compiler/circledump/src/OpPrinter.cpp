@@ -825,6 +825,34 @@ public:
   }
 };
 
+class RmsNormPrinter : public OpPrinter
+{
+public:
+  void options(const circle::Operator *op, std::ostream &os) const override
+  {
+    if (auto *params = op->builtin_options_as_RmsNormOptions())
+    {
+      os << "    ";
+      os << "epsilon(" << params->epsilon() << ") ";
+      os << std::endl;
+    }
+  }
+};
+
+class RoPEPrinter : public OpPrinter
+{
+public:
+  void options(const circle::Operator *op, std::ostream &os) const override
+  {
+    if (auto *params = op->builtin_options_as_RoPEOptions())
+    {
+      os << "    ";
+      os << "mode(" << EnumNameRoPEMode(params->mode()) << ") ";
+      os << std::endl;
+    }
+  }
+};
+
 OpPrinterRegistry::OpPrinterRegistry()
 {
   _op_map[circle::BuiltinOperator_ADD] = make_unique<AddPrinter>();
@@ -871,6 +899,7 @@ OpPrinterRegistry::OpPrinterRegistry()
   // There is no Option for PRELU
   // There is no Option for RELU
   // There is no Option for RELU6
+  // There is no Option for RELU_0_TO_1
   // There is no Option for RELU_N1_TO_1
   _op_map[circle::BuiltinOperator_REDUCE_ANY] = make_unique<ReducerPrinter>();
   _op_map[circle::BuiltinOperator_REDUCE_MAX] = make_unique<ReducerPrinter>();
@@ -911,6 +940,8 @@ OpPrinterRegistry::OpPrinterRegistry()
   _op_map[circle::BuiltinOperator_BCQ_GATHER] = make_unique<BCQGatherPrinter>();
   _op_map[circle::BuiltinOperator_GRU] = make_unique<GRUPrinter>();
   _op_map[circle::BuiltinOperator_INSTANCE_NORM] = make_unique<InstanceNormPrinter>();
+  _op_map[circle::BuiltinOperator_RMS_NORM] = make_unique<RmsNormPrinter>();
+  _op_map[circle::BuiltinOperator_ROPE] = make_unique<RoPEPrinter>();
 }
 
 } // namespace circledump

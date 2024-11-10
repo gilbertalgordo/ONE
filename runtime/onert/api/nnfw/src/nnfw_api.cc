@@ -268,11 +268,9 @@ NNFW_STATUS nnfw_register_custom_op_info(nnfw_session *session, const char *id,
   return session->register_custom_operation(id, info->eval_function);
 }
 
-NNFW_STATUS nnfw_apply_tensorinfo(nnfw_session *session, uint32_t index,
-                                  nnfw_tensorinfo tensor_info)
+NNFW_STATUS nnfw_apply_tensorinfo(nnfw_session *, uint32_t, nnfw_tensorinfo)
 {
-  NNFW_RETURN_ERROR_IF_NULL(session);
-  return session->apply_tensorinfo(index, tensor_info);
+  return nnfw_session::deprecated("nnfw_apply_tensorinfo: Deprecated");
 }
 
 NNFW_STATUS nnfw_set_input_tensorinfo(nnfw_session *session, uint32_t index,
@@ -294,7 +292,7 @@ NNFW_STATUS nnfw_set_available_backends(nnfw_session *session, const char *backe
   return session->set_available_backends(backends);
 }
 
-/*
+/**
  * Set the operation's backend
  *
  * @param[in] session session to be modified
@@ -303,10 +301,9 @@ NNFW_STATUS nnfw_set_available_backends(nnfw_session *session, const char *backe
  *
  * @return NNFW_STATUS_NO_ERROR if successful
  */
-NNFW_STATUS nnfw_set_op_backend(nnfw_session *session, const char *op, const char *backend)
+NNFW_STATUS nnfw_set_op_backend(nnfw_session *, const char *, const char *)
 {
-  NNFW_RETURN_ERROR_IF_NULL(session);
-  return session->set_op_backend(op, backend);
+  return nnfw_session::deprecated("nnfw_set_op_backend: Deprecated");
 }
 
 /*
@@ -367,23 +364,25 @@ NNFW_STATUS nnfw_set_backends_per_operation(nnfw_session *session, const char *b
   return session->set_backends_per_operation(backend_settings);
 }
 
-NNFW_STATUS nnfw_prepare_pipeline(nnfw_session *session, const char *map_file_path)
+NNFW_STATUS nnfw_prepare_pipeline(nnfw_session *, const char *)
 {
-  NNFW_RETURN_ERROR_IF_NULL(session);
-  return session->prepare_pipeline(map_file_path);
+  return nnfw_session::deprecated("nnfw_prepare_pipeline: Deprecated");
 }
 
-NNFW_STATUS nnfw_push_pipeline_input(nnfw_session *session, void *inputs, void *lengths)
+NNFW_STATUS nnfw_push_pipeline_input(nnfw_session *, void *, void *)
 {
-  NNFW_RETURN_ERROR_IF_NULL(session);
-  return session->push_pipeline_input((std::vector<void *> *)inputs,
-                                      (std::vector<uint32_t> *)lengths);
+  return nnfw_session::deprecated("nnfw_push_pipeline_input: Deprecated");
 }
 
-NNFW_STATUS nnfw_pop_pipeline_output(nnfw_session *session, void *outputs)
+NNFW_STATUS nnfw_pop_pipeline_output(nnfw_session *, void *)
+{
+  return nnfw_session::deprecated("nnfw_pop_pipeline_output: Deprecated");
+}
+
+NNFW_STATUS nnfw_set_workspace(nnfw_session *session, const char *dir)
 {
   NNFW_RETURN_ERROR_IF_NULL(session);
-  return session->pop_pipeline_output((std::vector<void *> *)outputs);
+  return session->set_workspace(dir);
 }
 
 // Training
@@ -459,6 +458,24 @@ NNFW_STATUS nnfw_train_export_circle(nnfw_session *session, const char *path)
   return session->train_export_circle(path);
 }
 
+NNFW_STATUS nnfw_train_export_circleplus(nnfw_session *session, const char *path)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->train_export_circleplus(path);
+}
+
+NNFW_STATUS nnfw_train_import_checkpoint(nnfw_session *session, const char *path)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->train_import_checkpoint(path);
+}
+
+NNFW_STATUS nnfw_train_export_checkpoint(nnfw_session *session, const char *path)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->train_export_checkpoint(path);
+}
+
 // Quantization
 
 NNFW_STATUS nnfw_set_quantization_type(nnfw_session *session, NNFW_QUANTIZE_TYPE qtype)
@@ -489,4 +506,32 @@ NNFW_STATUS nnfw_codegen(nnfw_session *session, const char *target, NNFW_CODEGEN
 {
   NNFW_RETURN_ERROR_IF_NULL(session);
   return session->codegen(target, pref);
+}
+
+// Configuration
+
+NNFW_STATUS nnfw_set_prepare_config(nnfw_session *session, const NNFW_PREPARE_CONFIG key,
+                                    const char *value)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->set_prepare_config(key, value);
+}
+
+NNFW_STATUS nnfw_reset_prepare_config(nnfw_session *session)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->reset_prepare_config();
+}
+
+NNFW_STATUS nnfw_set_execute_config(nnfw_session *session, const NNFW_RUN_CONFIG key,
+                                    const char *value)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->set_execute_config(key, value);
+}
+
+NNFW_STATUS nnfw_reset_execute_config(nnfw_session *session)
+{
+  NNFW_RETURN_ERROR_IF_NULL(session);
+  return session->reset_execute_config();
 }

@@ -160,6 +160,31 @@ OMStatus onert_micro::execute::execute_kernel_CircleSub(const OMExecuteArgs &exe
     }
     break;
 #endif // DIS_FLOAT
+#ifndef DIS_QUANT
+    case circle::TensorType_INT8:
+    {
+      core::ArithmeticQuantParams sub_params{};
+
+      calculateQuantParams(sub_params, input1, input2, output,
+                           options->fused_activation_function());
+
+      if (need_broadcast)
+      {
+        status = pal::BroadcastSub4DSlow(
+          sub_params, input1_shape, core::utils::castInputData<int8_t>(input1_data), input2_shape,
+          core::utils::castInputData<int8_t>(input2_data), output_shape,
+          core::utils::castOutputData<int8_t>(output_data));
+      }
+      else
+      {
+        status = pal::Sub(sub_params, input1_shape.flatSize(),
+                          core::utils::castInputData<int8_t>(input1_data),
+                          core::utils::castInputData<int8_t>(input2_data),
+                          core::utils::castOutputData<int8_t>(output_data));
+      }
+    }
+    break;
+#endif // DIF_QUANT
     default:
     {
       status = UnsupportedType;

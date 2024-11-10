@@ -81,6 +81,8 @@ public:
   void visit(const ir::operation::Reshape &) override;
   void visit(const ir::operation::ResizeBilinear &node) override;
   void visit(const ir::operation::Reverse &) override;
+  void visit(const ir::operation::RmsNorm &) override;
+  void visit(const ir::operation::RoPE &) override;
   void visit(const ir::operation::Select &) override;
   void visit(const ir::operation::Shape &) override;
   void visit(const ir::operation::Slice &) override;
@@ -100,7 +102,6 @@ public:
 private:
   const ir::Operands &_ctx;
   const ir::Operations &_operations_ctx;
-  ir::Layout _current_layout;
   std::shared_ptr<TensorBuilder> _tensor_builder;
   std::shared_ptr<basic::TensorRegistry> _tensor_reg;
   std::shared_ptr<backend::custom::IKernelBuilder> _kernel_builder;

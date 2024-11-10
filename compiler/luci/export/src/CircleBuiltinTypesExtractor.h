@@ -358,6 +358,7 @@ public:
     return circle::CreateReducerOptions(_builder, node->keep_dims()).Union();
   }
   flatbuffers::Offset<void> visit(luci::CircleRelu *) { return _no_option; }
+  flatbuffers::Offset<void> visit(luci::CircleRelu0To1 *) { return _no_option; }
   flatbuffers::Offset<void> visit(luci::CircleRelu6 *) { return _no_option; }
   flatbuffers::Offset<void> visit(luci::CircleReluN1To1 *) { return _no_option; }
   flatbuffers::Offset<void> visit(luci::CircleReshape *node)
@@ -546,6 +547,14 @@ public:
     return circle::CreateInstanceNormOptions(_builder, node->epsilon(),
                                              to_circle_actfunc(node->fusedActivationFunction()))
       .Union();
+  }
+  flatbuffers::Offset<void> visit(luci::CircleRmsNorm *node)
+  {
+    return circle::CreateRmsNormOptions(_builder, node->epsilon()).Union();
+  }
+  flatbuffers::Offset<void> visit(luci::CircleRoPE *node)
+  {
+    return circle::CreateRoPEOptions(_builder, to_circle_rope(node->mode())).Union();
   }
 
 protected:

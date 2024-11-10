@@ -133,6 +133,7 @@ public:
   uint32_t addTensor(const TensorParams &params, const SparsityParams &sp);
   void setInputsAndOutputs(const std::vector<int> &inputs, const std::vector<int> &outputs);
   uint32_t nextSubgraph();
+  uint32_t getCurrentSubgraphOpsSize() const;
   CircleBuffer finish();
 
   // ===== Add Operator methods begin (SORTED IN ALPHABETICAL ORDER) =====
@@ -175,6 +176,7 @@ public:
   uint32_t addOperatorFullyConnected(const OperatorParams &params,
                                      circle::FullyConnectedOptionsWeightsFormat weights_format =
                                        circle::FullyConnectedOptionsWeightsFormat_DEFAULT);
+  uint32_t addOperatorGather(const OperatorParams &params, int axis = 0, int batchdim = 0);
   uint32_t addOperatorGreater(const OperatorParams &params);
   uint32_t addOperatorGreaterEqual(const OperatorParams &params);
   uint32_t addOperatorIf(const OperatorParams &params, uint32_t then_subg, uint32_t else_subg);
@@ -186,6 +188,9 @@ public:
   uint32_t addOperatorLessEqual(const OperatorParams &params);
   uint32_t addOperatorLogSoftmax(const OperatorParams &params);
   uint32_t addOperatorMul(const OperatorParams &params, circle::ActivationFunctionType actfn);
+  uint32_t addOperatorMaxPool2D(const OperatorParams &params, circle::Padding padding, int stride_w,
+                                int stride_h, int filter_w, int filter_h,
+                                circle::ActivationFunctionType actfn);
   uint32_t addOperatorMean(const OperatorParams &params, bool keep_dims);
   uint32_t addOperatorNeg(const OperatorParams &params);
   uint32_t addOperatorNotEqual(const OperatorParams &params);
@@ -196,6 +201,8 @@ public:
   uint32_t addOperatorRank(const OperatorParams &params);
   uint32_t addOperatorReduce(const OperatorParams &params, circle::BuiltinOperator reduce_op,
                              bool keep_dims);
+  uint32_t addOperatorRmsNorm(const OperatorParams &params, float epsilon);
+  uint32_t addOperatorRoPE(const OperatorParams &params, circle::RoPEMode mode);
   /**
    * @brief Create circle Reshape op
    *        the second param new_shape can be optional just like circle::CreateReshapeOptionsDirect

@@ -1,6 +1,5 @@
-# TODO Remove other Flatbuffers versions
 function(_FlatBuffers_import)
-  find_package(Flatbuffers 2.0 QUIET)
+  find_package(Flatbuffers 2.0 EXACT QUIET PATHS ${EXT_OVERLAY_DIR}/FLATBUFFERS-2.0)
   set(FlatBuffers_FOUND ${Flatbuffers_FOUND} PARENT_SCOPE)
 endfunction(_FlatBuffers_import)
 
@@ -29,7 +28,7 @@ function(_FlatBuffers_build)
   nnas_include(ExternalBuildTools)
   ExternalBuild_CMake(CMAKE_DIR   ${FlatBuffersSource_DIR}
                       BUILD_DIR   ${CMAKE_BINARY_DIR}/externals/FLATBUFFERS-2.0/build
-                      INSTALL_DIR ${EXT_OVERLAY_DIR}
+                      INSTALL_DIR ${EXT_OVERLAY_DIR}/FLATBUFFERS-2.0
                       BUILD_FLAGS ${ADDITIONAL_CXX_FLAGS}
                       IDENTIFIER  "2.0"
                       EXTRA_OPTS  "-DFLATBUFFERS_BUILD_TESTS:BOOL=OFF"
@@ -47,7 +46,7 @@ _FlatBuffers_import()
 set(FLATC_PATH "$<TARGET_FILE:flatbuffers::flatc>")
 
 if(DEFINED ENV{BUILD_HOST_EXEC})
-  set(FLATC_PATH $ENV{BUILD_HOST_EXEC}/overlay/bin/flatc)
+  set(FLATC_PATH $ENV{BUILD_HOST_EXEC}/overlay/FLATBUFFERS-2.0/bin/flatc)
 endif(DEFINED ENV{BUILD_HOST_EXEC})
 if(DEFINED ENV{EXTERNAL_FLATC})
   set(FLATC_PATH $ENV{EXTERNAL_FLATC})

@@ -21,19 +21,21 @@
 #include <vector>
 
 #include "allocation.h"
-
-struct nnfw_session;
+#include "benchmark/RandomGenerator.h"
 
 namespace onert_run
 {
 class RandomGenerator
 {
 public:
-  RandomGenerator(nnfw_session *sess) : session_(sess) {}
+  RandomGenerator() : generator_(1, 0.0f, 2.0f)
+  {
+    // DO NOTHING
+  }
   void generate(std::vector<Allocation> &inputs);
 
 private:
-  nnfw_session *session_;
+  benchmark::RandomGenerator generator_;
 };
 } // namespace onert_run
 

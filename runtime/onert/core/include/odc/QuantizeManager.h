@@ -18,6 +18,7 @@
 #define __ONERT_ODC_QUANTIZE_MANAGER_H__
 
 #include "IQuantizer.h"
+#include "QuantizeType.h"
 
 #include <functional>
 #include <string>
@@ -33,8 +34,7 @@ class QuantizeManager
 {
 public:
   // Non-copyable
-  QuantizeManager() = delete;
-  QuantizeManager(const std::string &model_path) : _model_path(model_path) {}
+  QuantizeManager() = default;
   QuantizeManager(QuantizeManager const &) = delete;
   QuantizeManager &operator=(QuantizeManager const &) = delete;
 
@@ -56,23 +56,22 @@ public:
   /**
    * @brief Set quantize type
    *
-   * @param is_q16  true if q16, false if q8
+   * @param qtype quantization type
    *
    * @todo  Support more general quantize type
    */
-  void quantizeType(bool is_q16) { _is_q16 = is_q16; }
+  void quantizeType(QuantizeType qtype) { _qtype = qtype; }
 
   /**
-   * @brief  Quantize model
-   *
-   * @return  true if success, otherwise false
+   * @brief     Quantize model
+   * @param[in] model_path  Model path to quantize
+   * @return    @c true if success, otherwise @c false
    */
-  bool quantize();
+  bool quantize(const std::string &model_path);
 
 private:
-  std::string _model_path = "";
   std::string _export_model_path = "";
-  bool _is_q16 = false;
+  QuantizeType _qtype = ODC_QTYPE_NOT_SET;
 };
 
 } // namespace odc

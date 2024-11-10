@@ -18,6 +18,7 @@
 #include "core/memory/OMMemoryManager.h"
 
 #include "core/OMDataType.h"
+#include <limits>
 
 using namespace onert_micro::core::memory;
 using namespace onert_micro;
@@ -29,10 +30,25 @@ OMStatus OMRuntimeAllocator::clearAllTensorsData(OMRuntimeContext *context,
 
   for (auto &cur_tensor_index_data : tensor_index_to_data)
   {
-    auto tensor_index = cur_tensor_index_data.first;
     uint8_t *allocated_data = cur_tensor_index_data.second;
+#ifdef OM_MEMORY_ESTIMATE
+    auto tensor_index = cur_tensor_index_data.first;
 
+    auto tensor = context->getTensorByIndex(tensor_index);
+    auto num_elements = OMRuntimeShape(tensor).flatSize();
+
+#ifndef DIS_DYN_SHAPES
+    int32_t dynamic_tensor_size = storage->getDynamicRuntimeShape(tensor_index).flatSize();
+    if (dynamic_tensor_size != 0)
+      num_elements = dynamic_tensor_size;
+#endif // DIS_DYN_SHAPES
+
+    auto tensor_size = num_elements * sizeof(OMDataType(tensor->type()));
+
+    OMMemoryManager::deallocateMemory(tensor_size, allocated_data);
+#else
     OMMemoryManager::deallocateMemory(allocated_data);
+#endif // OM_MEMORY_ESTIMATE
   }
 
   return Ok;
@@ -55,18 +71,21 @@ OMStatus OMRuntimeAllocator::allocate(size_t kernel_index, OMRuntimeContext *con
     int32_t num_elements = tensor_shape.flatSize();
 
 #ifndef DIS_DYN_SHAPES
-    int32_t dynamic_tensor_size = storage->getDynamicTensorSize(tensor_index);
-    if (dynamic_tensor_size != -1)
+    int32_t dynamic_tensor_size = storage->getDynamicRuntimeShape(tensor_index).flatSize();
+    if (dynamic_tensor_size != 0)
       num_elements = dynamic_tensor_size;
 #endif // DIS_DYN_SHAPES
 
-    assert(num_elements >= 0 && "Num elements should be positive");
+    assert(num_elements >= 0 && "Num elements should be greater zero");
     if (num_elements < 0)
       return UnknownError;
     const auto casted_num_elements = static_cast<uint32_t>(num_elements);
     const auto type_size =
       static_cast<uint32_t>(getOMDataTypeSize(onertMicroDatatype(tensor->type())));
-
+    if (casted_num_elements > std::numeric_limits<uint32_t>::max() / type_size)
+    {
+      return FailedCheckCondition;
+    }
     // allocate data
     uint8_t *allocated_data = nullptr;
     assert(storage->getDataByTensorIndex(&allocated_data, tensor_index) == Ok &&
@@ -82,6 +101,50 @@ OMStatus OMRuntimeAllocator::allocate(size_t kernel_index, OMRuntimeContext *con
   return Ok;
 }
 
+#ifdef OM_MEMORY_ESTIMATE
+OMStatus OMRuntimeAllocator::deallocate(size_t kernel_index, OMRuntimeStorage *storage,
+                                        OMRuntimeContext *context)
+{
+  assert(kernel_index < _alloc_plan.size() && "Wrong kernel index");
+  if (kernel_index >= _alloc_plan.size())
+    return UnknownError;
+
+  const std::vector<uint16_t> &current_deallocate_plan = _dealloc_plan[kernel_index];
+
+  for (const uint16_t tensor_index : current_deallocate_plan)
+  {
+    uint8_t *allocated_data = nullptr;
+    OMStatus status = storage->getDataByTensorIndex(&allocated_data, tensor_index);
+    // To continue deallocate due to current tensor is not saved in storage
+    if (allocated_data == nullptr)
+      continue;
+    if (status != Ok)
+      return status;
+
+    auto tensor = context->getTensorByIndex(tensor_index);
+    auto num_elements = OMRuntimeShape(tensor).flatSize();
+
+#ifndef DIS_DYN_SHAPES
+    int32_t dynamic_tensor_size = storage->getDynamicRuntimeShape(tensor_index).flatSize();
+    if (dynamic_tensor_size != 0)
+      num_elements = dynamic_tensor_size;
+#endif // DIS_DYN_SHAPES
+
+    auto tensor_size = num_elements * sizeof(OMDataType(tensor->type()));
+    status = OMMemoryManager::deallocateMemory(tensor_size, allocated_data);
+    if (status != Ok)
+      return status;
+
+    status = storage->removeTensorFromTensorIndexToData(tensor_index);
+    if (status != Ok)
+      return status;
+  }
+
+  return Ok;
+}
+
+#endif // OM_MEMORY_ESTIMATE
+
 OMStatus OMRuntimeAllocator::deallocate(size_t kernel_index, OMRuntimeStorage *storage)
 {
   assert(kernel_index < _alloc_plan.size() && "Wrong kernel index");
@@ -94,12 +157,14 @@ OMStatus OMRuntimeAllocator::deallocate(size_t kernel_index, OMRuntimeStorage *s
   {
     uint8_t *allocated_data = nullptr;
     OMStatus status = storage->getDataByTensorIndex(&allocated_data, tensor_index);
-    if (status != Ok)
-      return status;
+    assert(status == Ok); // note that status always 0
+
+    // To continue deallocate due to current tensor is not saved in storage
+    if (allocated_data == nullptr)
+      continue;
 
     status = OMMemoryManager::deallocateMemory(allocated_data);
-    if (status != Ok)
-      return status;
+    assert(status == Ok); // note that status always 0
 
     status = storage->removeTensorFromTensorIndexToData(tensor_index);
     if (status != Ok)
@@ -132,10 +197,19 @@ OMStatus OMRuntimeAllocator::allocateGraphInputs(OMRuntimeContext *context,
     uint8_t *allocated_data = nullptr;
     // First clear if already allocated
     status = storage->getDataByTensorIndex(&allocated_data, tensor_index);
-    if (status != Ok)
-      return status;
 
+#ifdef OM_MEMORY_ESTIMATE
+#ifndef DIS_DYN_SHAPES
+    int32_t dynamic_tensor_size = storage->getDynamicRuntimeShape(tensor_index).flatSize();
+    if (dynamic_tensor_size != 0)
+      num_elements = dynamic_tensor_size;
+#endif // DIS_DYN_SHAPES
+
+    auto tensor_size = num_elements * sizeof(OMDataType(tensor->type()));
+    OMMemoryManager::deallocateMemory(tensor_size, allocated_data);
+#else
     OMMemoryManager::deallocateMemory(allocated_data);
+#endif // OM_MEMORY_ESTIMATE
 
     // Then Allocate
     status = OMMemoryManager::allocateMemory(casted_num_elements * type_size, &allocated_data);

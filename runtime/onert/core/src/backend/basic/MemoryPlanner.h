@@ -41,7 +41,7 @@ namespace basic
 /**
  * @brief Class to plan memory by bump way
  */
-class BumpPlanner : public IMemoryPlanner
+class BumpPlanner : public IMemoryPlanner<ir::OperandIndex>
 {
 public:
   /**
@@ -74,7 +74,7 @@ private:
 /**
  * @brief Class to plan memory by firstfit way
  */
-class FirstFitPlanner : public IMemoryPlanner
+class FirstFitPlanner : public IMemoryPlanner<ir::OperandIndex>
 {
 public:
   /**
@@ -109,7 +109,7 @@ private:
 /**
  * @brief Class to plan memory by Weighted Interval Color algorithm
  */
-class WICPlanner : public IMemoryPlanner
+class WICPlanner : public IMemoryPlanner<ir::OperandIndex>
 {
 public:
   WICPlanner();

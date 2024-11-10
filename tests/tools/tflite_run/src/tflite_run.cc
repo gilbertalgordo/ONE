@@ -17,7 +17,6 @@
 #include "args.h"
 #include "tensor_dumper.h"
 #include "tensor_loader.h"
-#include "misc/benchmark.h"
 #include "misc/EnvVar.h"
 #include "misc/fp32.h"
 #include "tflite/Diff.h"
@@ -142,7 +141,7 @@ int main(const int argc, char **argv)
   else
   {
     const int seed = 1; /* TODO Add an option for seed value */
-    nnfw::misc::RandomGenerator randgen{seed, 0.0f, 2.0f};
+    benchmark::RandomGenerator randgen{seed, 0.0f, 2.0f};
 
     RandomInputInitializer initializer{randgen};
     initializer.run(*interpreter);

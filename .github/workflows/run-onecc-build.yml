@@ -1,0 +1,133 @@
+name: Run ONECC Ubuntu Build
+
+on:
+  push:
+    branches:
+      - master
+      - release/*
+    paths:
+      - '.github/workflows/run-onecc-build.yml'
+      - 'nnas'
+      - 'nncc'
+      - 'compiler/**'
+      - 'infra/cmake/**'
+      - 'infra/nncc/**'
+      - 'nnpackage/schema/**'
+      - 'res/**'
+      - '!**/*.md'
+  pull_request:
+    branches:
+      - master
+      - release/*
+    paths:
+      - '.github/workflows/run-onecc-build.yml'
+      - 'nnas'
+      - 'nncc'
+      - 'compiler/**'
+      - 'infra/cmake/**'
+      - 'infra/nncc/**'
+      - 'nnpackage/schema/**'
+      - 'res/**'
+      - '!**/*.md'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  onecc-test:
+    if: github.repository_owner == 'Samsung'
+    strategy:
+      matrix:
+        type: [ Debug, Release ]
+        ubuntu_code: [ focal, jammy ]
+        include:
+          - ubuntu_code: focal
+            ubuntu_ver: 20.04
+          - ubuntu_code: jammy
+            ubuntu_ver: 22.04
+    runs-on: ubuntu-${{ matrix.ubuntu_ver }}
+    env:
+      NNCC_WORKSPACE : build
+      NNCC_INSTALL_PREFIX : install
+    name: onecc ubuntu ${{ matrix.ubuntu_ver }} ${{ matrix.type }} test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # dalgona uses pybind11, but pybind11 cannot bind packages in virtualenv.
+      # So we need to install packages for dalgona-test globally.
+      - name: Install required packages
+        run: |
+          python3 -m pip install numpy h5py==3.11.0 flatbuffers==23.5.26
+
+      - name: Caching externals
+        uses: actions/cache@v4
+        with:
+          path: externals
+          key: external-onecc-${{ hashFiles('infra/cmake/packages/**/*.cmake') }}
+          restore-keys: |
+            external-onecc-
+            external-
+
+      - name: Caching externals
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NNCC_WORKSPACE }}/overlay
+          key: overlay-onecc-${{ matrix.ubuntu_code }}-${{ hashFiles('compiler/common-artifacts/CMakeLists.txt') }}-${{ hashFiles('infra/cmake/packages/**/*.cmake') }}
+
+      - name: Build
+        run: |
+          ./nncc configure -DENABLE_STRICT_BUILD=ON -DCMAKE_BUILD_TYPE=${{ matrix.type }} \
+            -DEXTERNALS_BUILD_THREADS=$(nproc) -DCMAKE_INSTALL_PREFIX=${NNCC_INSTALL_PREFIX}
+          ./nncc build -j$(nproc)
+          cmake --build ${NNCC_WORKSPACE} -- install
+
+      - name: Test(Debug)
+        if: matrix.type == 'Debug'
+        env:
+          LUCI_LOG : 100
+        run: ./nncc test
+
+      - name: Test(Release)
+        if: matrix.type == 'Release'
+        env:
+          NNCC_INSTALL_PATH : ${{ env.NNCC_WORKSPACE }}/${{ env.NNCC_INSTALL_PREFIX }}
+        run: |
+          ./nncc test
+          ${NNCC_INSTALL_PATH}/bin/one-prepare-venv
+          ${NNCC_INSTALL_PATH}/test/prepare_test_materials.sh
+          export PATH=${PWD}/${NNCC_INSTALL_PATH}/bin:$PATH
+          pushd ${NNCC_INSTALL_PATH}/test
+
+          ## one-import-tf -> one-optimize -> one-quantize -> one-codegen
+          bash onecc_006.test
+          ## one-import-tflite
+          bash onecc_014.test
+          ## one-import-bcq
+          bash onecc_015.test
+          ## one-import-onnx
+          bash onecc_016.test
+          ## one-pack
+          bash onecc_019.test
+          ## one-profile
+          bash onecc_021.test
+          ## one-quantize
+          bash onecc_023.test
+          bash onecc_026.test
+          ## one-infer
+          bash onecc_027.test
+          ## onecc workflows
+          bash onecc_032.test
+          bash onecc_041.test
+
+      # Upload log if failed
+      - name: Upload log
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fail-${{ matrix.ubuntu_code }}-${{ matrix.type }}
+          path: |
+            ${{ env.NNCC_WORKSPACE }}/compiler/**/*.log
+            ${{ env.NNCC_INSTALL_PATH }}/test/**/*.log

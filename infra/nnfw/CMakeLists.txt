@@ -6,7 +6,7 @@ enable_testing()
 
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN/../lib/nnfw/odc:$ORIGIN/")
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib/:$ORIGIN/")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 ### CMAKE_BUILD_TYPE_LC: Build type lower case
@@ -37,10 +37,10 @@ endmacro(nnas_include)
 # Runtime 'find_package()' wrapper to find in cmake/packages folder
 #
 # Example:
-#  nnfw_find_package(Boost): Load settings from 'BoostConfig.cmake' file
-#    - this may drop warnings like "-- Could NOT find Boost (missing: Boost_DIR)
-#  nnfw_find_package(Boost QUIET): Load settings silently, without warnings
-#  nnfw_find_package(Boost REQUIRED): Load settings but stop with error when failed
+#  nnfw_find_package(Eigen): Load settings from 'EigenConfig.cmake' file
+#    - this may drop warnings like "-- Could NOT find Eigen (missing: Eigen_DIR)
+#  nnfw_find_package(Eigen QUIET): Load settings silently, without warnings
+#  nnfw_find_package(Eigen REQUIRED): Load settings but stop with error when failed
 macro(nnfw_find_package PREFIX)
   find_package(${PREFIX} CONFIG NO_DEFAULT_PATH
     PATHS ${CMAKE_SOURCE_DIR}/cmake/packages
@@ -56,13 +56,12 @@ macro(nnas_find_package PREFIX)
   )
 endmacro(nnas_find_package)
 
-# C++14 feature requires 5 or later
-# Using std::unordered_map shows build fail under 6.2
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6.2)
-  message(FATAL "Runtime build requires GNU Compiler version 6.2 or later.")
+# C++17 feature requires 9.1 or later for stable usage
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.1)
+  message(FATAL "Runtime build requires GNU Compiler version 9.1 or later.")
 endif()
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -116,6 +115,13 @@ if(ENABLE_COVERAGE)
 endif(ENABLE_COVERAGE)
 
 nnas_include(AddSubdirectories)
+
+# Add arser for test driver
+# TODO: Better way to handle this
+if(ENABLE_TEST)
+  add_library(arser INTERFACE)
+  target_include_directories(arser INTERFACE ${NNAS_PROJECT_SOURCE_DIR}/compiler/arser/include/)
+endif(ENABLE_TEST)
 
 add_subdirectory(${NNAS_PROJECT_SOURCE_DIR}/compute compute)
 add_subdirectory(${NNAS_PROJECT_SOURCE_DIR}/runtime runtime)

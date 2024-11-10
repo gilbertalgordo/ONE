@@ -16,6 +16,8 @@
 
 #include "luci/Import/Nodes/CircleConst.h"
 
+#include "luci/Import/CircleReader.h"
+
 #include <luci/IR/Nodes/CircleConst.h>
 #include <luci/Log.h>
 
@@ -23,9 +25,12 @@
 #include <oops/UserExn.h>
 
 #include <cassert>
+#include <limits>
 #include <ostream>
 #include <string>
 #include <vector>
+
+#include <string.h>
 
 namespace
 {
@@ -68,54 +73,6 @@ void copy_data(const VectorWrapper<uint8_t> &raw_data, uint32_t num_elements,
 }
 
 template <>
-void copy_data<loco::DataType::S4>(const VectorWrapper<uint8_t> &raw_data, uint32_t num_elements,
-                                   CircleConst *const_node)
-{
-  // TODO support sparse?
-  assert(const_node->sparsityparam() == nullptr);
-  if (const_node->sparsityparam())
-    return;
-
-  uint32_t raw_size = (num_elements + 1) / 2;
-  assert(raw_data.size() == raw_size);
-
-  const uint8_t *data = raw_data.data();
-  const_node->size<loco::DataType::S4>(num_elements);
-  for (uint32_t i = 0; i < raw_size; ++i)
-  {
-    uint32_t idx = i * 2;
-    // 1bit for sign, 3bit for value
-    const_node->at<loco::DataType::S4>(idx++) = static_cast<int8_t>(data[i] << 4) >> 4;
-    if (idx < num_elements)
-      const_node->at<loco::DataType::S4>(idx) = static_cast<int8_t>(data[i]) >> 4;
-  }
-}
-
-template <>
-void copy_data<loco::DataType::U4>(const VectorWrapper<uint8_t> &raw_data, uint32_t num_elements,
-                                   CircleConst *const_node)
-{
-  // TODO support sparse?
-  assert(const_node->sparsityparam() == nullptr);
-  if (const_node->sparsityparam())
-    return;
-
-  uint32_t raw_size = (num_elements + 1) / 2;
-  assert(raw_data.size() == raw_size);
-
-  const uint8_t *data = raw_data.data();
-  const_node->size<loco::DataType::U4>(num_elements);
-  for (uint32_t i = 0; i < raw_size; ++i)
-  {
-    uint32_t idx = i * 2;
-    // 1bit for sign, 3bit for value
-    const_node->at<loco::DataType::U4>(idx++) = static_cast<uint8_t>(data[i] << 4) >> 4;
-    if (idx < num_elements)
-      const_node->at<loco::DataType::U4>(idx) = static_cast<uint8_t>(data[i]) >> 4;
-  }
-}
-
-template <>
 void copy_data<loco::DataType::STRING>(const VectorWrapper<uint8_t> &raw_data,
                                        uint32_t num_elements, CircleConst *const_node)
 {
@@ -150,6 +107,38 @@ void copy_data<loco::DataType::STRING>(const VectorWrapper<uint8_t> &raw_data,
   }
 }
 
+// NOTE copy_data for S4, U4.
+//      this method will unpack two 4bit elements, packed in 8bit,
+//      to two 8bit elements, having values -8~7, for S4 and 0~15 for U4.
+template <loco::DataType DT>
+void copy_data_4(const VectorWrapper<uint8_t> &raw_data, uint32_t num_elements,
+                 CircleConst *const_node)
+{
+  using T = typename loco::DataTypeImpl<DT>::Type;
+
+  // TODO support sparse?
+  assert(const_node->sparsityparam() == nullptr);
+  if (const_node->sparsityparam())
+    return;
+
+  uint32_t raw_size = (num_elements + 1) / 2;
+  assert(raw_data.size() == raw_size);
+
+  const uint8_t *data = raw_data.data();
+  const_node->size<DT>(num_elements);
+  for (uint32_t i = 0; i < raw_size; ++i)
+  {
+    uint32_t idx = i * 2;
+    // for S4, 1bit for sign, 3bit for value
+    const_node->at<DT>(idx) = static_cast<T>(data[i] << 4) >> 4;
+    if (idx < num_elements)
+    {
+      idx++;
+      const_node->at<DT>(idx) = static_cast<T>(data[i]) >> 4;
+    }
+  }
+}
+
 } // namespace
 
 namespace luci
@@ -172,8 +161,58 @@ CircleNode *CircleConstNodeBuilder::build(TensorIndex tensor_index,
     return nullptr;
   }
 
-  assert(reader->buffers()[const_tensor->buffer()] != nullptr);
-  const auto buffer = wrap(reader->buffers()[const_tensor->buffer()]->data());
+  const auto r_buffers = reader->buffers();
+  const auto c_buffer = const_tensor->buffer();
+  const auto r_buffer = r_buffers[c_buffer];
+  assert(r_buffer != nullptr);
+  if (r_buffer->offset() == 1 || r_buffer->size() == 1)
+  {
+    // NOTE this shouldn't happen
+    throw std::runtime_error("CircleConst: Circle file with invalid extended Buffer.");
+  }
+  // temporary buffer to provide raw data from file
+  // must have life time same or longer than 'buffer' variable
+  std::vector<uint8_t> temp_buffer;
+  luci::VectorWrapper<uint8_t> buffer(nullptr);
+  if (r_buffer->offset() > 1)
+  {
+    if (r_buffer->size() >= std::numeric_limits<uint32_t>::max())
+    {
+      // NOTE uint32_t limit is to match "uoffset_t flatbuffers::Vector::size()"
+      throw std::runtime_error("CircleConst: Circle file with invalid extended Buffer.");
+    }
+    uint32_t r_size = static_cast<uint32_t>(r_buffer->size());
+    // match binary level to flatbuffers::Vector
+    temp_buffer.resize(r_size + sizeof(uint32_t));
+
+    uint8_t *t_data = temp_buffer.data();
+    const uint8_t *f_data = reader->file_data(r_buffer->offset());
+    if (f_data == nullptr)
+    {
+      // NOTE this shouldn't happen
+      assert(false);
+      return nullptr;
+    }
+    memcpy(t_data, &r_size, sizeof(r_size));
+    t_data = t_data + sizeof(r_size);
+    if (r_buffer->offset() + r_buffer->size() > reader->file_size())
+    {
+      // NOTE this shouldn't happen
+      assert(false);
+      return nullptr;
+    }
+    memcpy(t_data, f_data, r_buffer->size());
+
+    using fbv_t = flatbuffers::Vector<uint8_t>;
+    const fbv_t *v_data = reinterpret_cast<const fbv_t *>(temp_buffer.data());
+    buffer = wrap(v_data);
+
+    context->ext_buffer(true);
+  }
+  else
+  {
+    buffer = wrap(r_buffer->data());
+  }
   const auto const_dims = wrap(const_tensor->shape()); // in NHWC
   if (const_dims.size() == 0 && buffer.empty())
   {
@@ -219,7 +258,7 @@ CircleNode *CircleConstNodeBuilder::build(TensorIndex tensor_index,
         break;
 
       case loco::DataType::U4:
-        copy_data<loco::DataType::U4>(buffer, num_elements, const_node);
+        copy_data_4<loco::DataType::U4>(buffer, num_elements, const_node);
         break;
 
       case loco::DataType::U8:
@@ -227,7 +266,7 @@ CircleNode *CircleConstNodeBuilder::build(TensorIndex tensor_index,
         break;
 
       case loco::DataType::S4:
-        copy_data<loco::DataType::S4>(buffer, num_elements, const_node);
+        copy_data_4<loco::DataType::S4>(buffer, num_elements, const_node);
         break;
 
       case loco::DataType::S8:

@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import configparser
 import os
+from typing import Optional
 import warnings
 
 import onelib.utils as oneutils
@@ -34,9 +34,7 @@ class CfgRunner:
     def __init__(self, path):
         self.path = path
         self.optparser = None
-        self.cfgparser = configparser.ConfigParser()
-        # make option names case sensitive
-        self.cfgparser.optionxform = str
+        self.cfgparser = oneutils.get_config_parser()
         parsed = self.cfgparser.read(os.path.expanduser(path))
         if not parsed:
             raise FileNotFoundError('Not found given configuration file')
@@ -57,6 +55,10 @@ class CfgRunner:
                 self.add_opt(o[1:])
 
         self.backend = None
+        self.target = None
+        if self.cfgparser.has_section('backend'):
+            if 'target' in self.cfgparser['backend']:
+                self.target = self.cfgparser['backend']['target']
 
     def _verify_cfg(self, cfgparser):
         if not cfgparser.has_section('onecc'):
@@ -73,10 +75,10 @@ class CfgRunner:
             'onecc', driver)) or (self.cfgparser.has_option('one-build', driver)
                                   and self.cfgparser.getboolean('one-build', driver))
 
-    def add_opt(self, opt):
-        self.optparser = configparser.ConfigParser()
-        # make option names case sensitive
-        self.optparser.optionxform = str
+    def add_opt(self, opt: Optional[str]):
+        if not opt:
+            return
+        self.optparser = oneutils.get_config_parser()
         opt_book = dict(
             zip(oneutils.get_optimization_list(get_name=True),
                 oneutils.get_optimization_list()))
@@ -90,8 +92,11 @@ class CfgRunner:
             )
         self.opt = opt
 
-    def set_backend(self, backend: str):
+    def set_backend(self, backend: Optional[str]):
         self.backend = backend
+
+    def set_target(self, target: Optional[str]):
+        self.target = target
 
     def detect_import_drivers(self, dir):
         self.import_drivers = list(oneutils.detect_one_import_drivers(dir).keys())
@@ -116,6 +121,8 @@ class CfgRunner:
                 options.append('--verbose')
             if (section == 'one-codegen' or section == 'one-profile') and self.backend:
                 options += ['-b', self.backend]
+            if (section == 'one-codegen' or section == 'one-profile') and self.target:
+                options += ['-T', self.target]
             driver_path = os.path.join(working_dir, section)
             cmd = [driver_path] + options
             oneutils.run(cmd)

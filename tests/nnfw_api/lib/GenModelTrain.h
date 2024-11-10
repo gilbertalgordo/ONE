@@ -20,17 +20,63 @@
 #include "GenModelTest.h"
 #include "CirclePlusGen.h"
 
+#include <numeric>
+#include <tuple>
+
 struct SessionObjectTraining : public SessionObjectGeneric
 {
-  std::vector<std::vector<uint8_t>> losses;
+  std::vector<std::vector<uint8_t>> expects;
 };
 
-struct TrainCaseData : public TestCaseData
+struct TrainCaseData
 {
+public:
+  using OneStepData =
+    std::vector<std::vector<uint8_t>>; // An input/output's data list to be used in one step
+  using DataSet = std::tuple<std::vector<OneStepData>,
+                             std::vector<OneStepData>>; // inputs dataset, expects dataset
+
+public:
   /**
-   * @brief A vector of losses buffers
+   * @brief A dataset of inputs/expects
    */
-  std::vector<std::vector<uint8_t>> losses;
+  DataSet dataset;
+
+  /**
+   * @brief A vector of loss buffers
+   */
+  std::vector<std::vector<float>> losses;
+
+  /**
+   * @brief Append vector data list of inputs that are used in one step
+   *
+   * @tparam T Data type of inputs
+   * @param inputs Inputs that are used in one step
+   */
+
+  template <typename T> TrainCaseData &addInputs(const std::vector<std::vector<T>> &inputs)
+  {
+    auto &[inputs_dataset, unused] = dataset;
+    (void)unused;
+    addData(inputs_dataset.emplace_back(), inputs);
+
+    return *this;
+  }
+
+  /**
+   * @brief Append vector data list of expects that are used in one step
+   *
+   * @tparam T Data type of expects
+   * @param expects Expects that are used in one step
+   */
+  template <typename T> TrainCaseData &addExpects(const std::vector<std::vector<T>> &expects)
+  {
+    auto &[unused, expects_dataset] = dataset;
+    (void)unused;
+    addData(expects_dataset.emplace_back(), expects);
+
+    return *this;
+  }
 
   /**
    * @brief Append vector data to losses
@@ -38,12 +84,64 @@ struct TrainCaseData : public TestCaseData
    * @tparam T Data type
    * @param data vector data array
    */
-  template <typename T> TrainCaseData &addLosses(const std::vector<T> &data)
+  TrainCaseData &addLosses(const std::vector<float> &loss)
   {
-    addData(losses, data);
+    losses.emplace_back(loss);
     return *this;
   }
+
+  /**
+   * @brief Call this when @c nnfw_run() for this test case is expected to be failed
+   */
+  TrainCaseData &expectFailRun()
+  {
+    _expected_fail_run = true;
+    return *this;
+  }
+  bool expected_fail_run() const { return _expected_fail_run; }
+
+private:
+  /**
+   * @brief Append vector data list that are used in one step
+   *
+   * @tparam T Data type of vector data
+   * @param dest Destination to store vector data list
+   * @param data Vector data list to be stored
+   */
+  template <typename T>
+  void addData(OneStepData &dest, const std::vector<std::vector<T>> &data_list)
+  {
+    for (const auto &data : data_list)
+    {
+      addData(dest, data);
+    }
+  }
+
+  /**
+   * @brief Append vector data
+   *
+   * @tparam T Data type
+   * @param dest Destination to store vector data
+   * @param data A vector data to be stored
+   */
+  template <typename T> void addData(OneStepData &dest, const std::vector<T> &data)
+  {
+    size_t size = data.size() * sizeof(T);
+    dest.emplace_back().resize(size);
+    std::memcpy(dest.back().data(), data.data(), size);
+  }
+
+  bool _expected_fail_run = false;
 };
+
+template <>
+inline void TrainCaseData::addData<bool>(OneStepData &dest, const std::vector<bool> &src)
+{
+  size_t size = src.size() * sizeof(uint8_t);
+  dest.emplace_back().resize(size);
+  std::transform(src.cbegin(), src.cend(), dest.back().data(),
+                 [](bool b) { return static_cast<uint8_t>(b); });
+}
 
 /**
  * @brief Create a TrainCaseData with a uniform type
@@ -52,23 +150,25 @@ struct TrainCaseData : public TestCaseData
  * inputs/expects/losses.
  *
  * @tparam T Uniform tensor type
- * @param inputs Inputs tensor buffers
- * @param expects Outputs tensor buffers
- * @param losses Losses tensor buffers
+ * @param inputs_dataset Inputs tensor buffers. format: dataset[steps[inputs[input_index]]]
+ * @param expects_dataset Outputs tensor buffers. format: dataset[steps[outputss[output_index]]]
+ * @param losses Expected loss buffers of last epoch. expected_losses[output_index]
  * @return TrainCaseData Generated train case data
  */
 template <typename T>
-static TrainCaseData uniformTCD(const std::vector<std::vector<T>> &inputs,
-                                const std::vector<std::vector<T>> &expects,
+static TrainCaseData uniformTCD(const std::vector<std::vector<std::vector<T>>> &inputs_dataset,
+                                const std::vector<std::vector<std::vector<T>>> &expects_dataset,
                                 const std::vector<std::vector<float>> &losses)
 {
+  assert(inputs_dataset.size() == expects_dataset.size());
+
   TrainCaseData ret;
-  for (const auto &data : inputs)
-    ret.addInput(data);
-  for (const auto &data : expects)
-    ret.addOutput(data);
-  for (const auto &data : losses)
-    ret.addLosses(data);
+  for (const auto &data : inputs_dataset)
+    ret.addInputs<T>(data);
+  for (const auto &data : expects_dataset)
+    ret.addExpects<T>(data);
+  for (const auto &loss : losses)
+    ret.addLosses(loss);
   return ret;
 }
 
@@ -228,101 +328,97 @@ protected:
       }
 
       // Prepare expected output
-      _so.outputs.resize(num_expecteds);
+      _so.expects.resize(num_expecteds);
       std::vector<nnfw_tensorinfo> expected_infos(num_expecteds);
       for (uint32_t ind = 0; ind < num_expecteds; ind++)
       {
         nnfw_tensorinfo ti;
         NNFW_ENSURE_SUCCESS(nnfw_output_tensorinfo(_so.session, ind, &ti));
         uint64_t output_elements = num_elems(&ti);
-        _so.outputs[ind].resize(output_elements * sizeOfNnfwType(ti.dtype));
+        _so.expects[ind].resize(output_elements * sizeOfNnfwType(ti.dtype));
 
         // Setting the output buffer size of specified output tensor is not supported yet
         ASSERT_EQ(_context->hasOutputSizes(ind), false);
 
         NNFW_ENSURE_SUCCESS(
-          nnfw_train_set_expected(_so.session, ind, _so.outputs[ind].data(), &ti));
+          nnfw_train_set_expected(_so.session, ind, _so.expects[ind].data(), &ti));
 
         expected_infos.emplace_back(std::move(ti));
       }
 
-      // Prepare expected loss
-      _so.losses.resize(num_expecteds);
-
       const int num_epoch = _context->epoch();
       ASSERT_GE(num_epoch, 2);
-      const int num_step = num_expecteds / tri.batch_size;
-      ASSERT_GE(num_step, 1);
-
       // Set input values & expected output values, train, and check loss
       for (const auto &train_case : _context->train_cases())
       {
-        // Inputs
-        const auto &ref_inputs = train_case.inputs;
-        ASSERT_EQ(_so.inputs.size(), ref_inputs.size());
-        for (uint32_t i = 0; i < _so.inputs.size(); i++)
-        {
-          // Fill the values
-          ASSERT_EQ(_so.inputs[i].size(), ref_inputs[i].size());
-          memcpy(_so.inputs[i].data(), ref_inputs[i].data(), ref_inputs[i].size());
-        }
+        const auto &[inputs_dataset, outputs_dataset] = train_case.dataset;
+        const auto num_step = inputs_dataset.size();
+        ASSERT_EQ(num_step, outputs_dataset.size());
 
-        // Expected outputs
-        const auto &ref_outputs = train_case.outputs;
-        ASSERT_EQ(_so.outputs.size(), ref_outputs.size());
-        for (uint32_t i = 0; i < _so.outputs.size(); i++)
-        {
-          // Fill the values
-          ASSERT_EQ(_so.outputs[i].size(), ref_outputs[i].size());
-          memcpy(_so.outputs[i].data(), ref_outputs[i].data(), ref_outputs[i].size());
-        }
-
-        // Expected losses
+        // Prepare expected losses
         const auto &ref_losses = train_case.losses;
-        ASSERT_EQ(_so.losses.size(), ref_losses.size());
-        for (uint32_t i = 0; i < _so.losses.size(); i++)
-        {
-          // Fill the values
-          _so.losses[i] = ref_losses[i];
-        }
-
-        if (train_case.expected_fail_run())
-        {
-          ASSERT_NE(nnfw_train(_so.session, true), NNFW_STATUS_NO_ERROR);
-          continue;
-        }
-
-        // Train
+        ASSERT_EQ(ref_losses.size(), num_epoch);
         std::vector<float> actual_losses(num_expecteds, 0.f);
         for (uint32_t epoch = 0; epoch < num_epoch; ++epoch)
         {
-          NNFW_ENSURE_SUCCESS(nnfw_train(_so.session, true));
+          std::fill(actual_losses.begin(), actual_losses.end(), 0.f);
 
-          // Store loss
-          for (int32_t i = 0; i < num_expecteds; ++i)
+          for (uint32_t step = 0; step < num_step; step++)
           {
-            float temp = 0.f;
-            NNFW_ENSURE_SUCCESS(nnfw_train_get_loss(_so.session, i, &temp));
-            actual_losses[i] += temp;
+            // Inputs
+            const auto &ref_inputs = inputs_dataset[step];
+            ASSERT_EQ(_so.inputs.size(), ref_inputs.size());
+            for (uint32_t i = 0; i < _so.inputs.size(); i++)
+            {
+              // Fill the values
+              ASSERT_EQ(_so.inputs[i].size(), ref_inputs[i].size());
+              memcpy(_so.inputs[i].data(), ref_inputs[i].data(), ref_inputs[i].size());
+            }
+
+            // Expected outputs
+            const auto &ref_expects = outputs_dataset[step];
+            ASSERT_EQ(_so.expects.size(), ref_expects.size());
+            for (uint32_t i = 0; i < _so.expects.size(); i++)
+            {
+              // Fill the values
+              ASSERT_EQ(_so.expects[i].size(), ref_expects[i].size());
+              memcpy(_so.expects[i].data(), ref_expects[i].data(), ref_expects[i].size());
+            }
+
+            if (train_case.expected_fail_run())
+            {
+              ASSERT_NE(nnfw_train(_so.session, true), NNFW_STATUS_NO_ERROR);
+              continue;
+            }
+
+            // Train
+            NNFW_ENSURE_SUCCESS(nnfw_train(_so.session, true));
+
+            // Store loss
+            for (int32_t i = 0; i < num_expecteds; ++i)
+            {
+              float temp = 0.f;
+              NNFW_ENSURE_SUCCESS(nnfw_train_get_loss(_so.session, i, &temp));
+              actual_losses[i] += temp;
+            }
           }
-        }
 
-        // Recalculate loss
-        for (uint32_t i = 0; i < num_expecteds; ++i)
-        {
-          actual_losses[i] /= num_step;
-        }
+          // Recalculate loss
+          for (uint32_t i = 0; i < num_expecteds; ++i)
+          {
+            actual_losses[i] /= num_step;
+          }
 
-        ASSERT_EQ(actual_losses.size(), _so.losses.size());
+          ASSERT_EQ(ref_losses[epoch].size(), actual_losses.size());
 
-        // TODO better way for handling FP error?
-        for (uint32_t i = 0; i < actual_losses.size(); i++)
-        {
-          float actual = actual_losses[i];
-          const auto &expected_loss = _so.losses[i];
-          ASSERT_EQ(expected_loss.size(), sizeof(float));
-          float expected = *(reinterpret_cast<const float *>(expected_loss.data()));
-          EXPECT_NEAR(expected, actual, 0.001) << "Loss #" << i;
+          // TODO better way for handling FP error?
+          for (uint32_t i = 0; i < actual_losses.size(); i++)
+          {
+            const float actual = actual_losses[i];
+            const float expected = ref_losses[epoch][i];
+            EXPECT_NEAR(expected, actual, 0.001)
+              << "Loss " << epoch + 1 << "/" << num_epoch << " #" << i;
+          }
         }
       }
 
@@ -380,6 +476,38 @@ private:
     }
 
     tri.batch_size = circle_model->batch_size();
+    if (circle_model->trainable_ops()->size() > 0)
+    {
+      // remove possible duplicates and sort indexes
+      const std::set<int32_t> trainable_ops(circle_model->trainable_ops()->begin(),
+                                            circle_model->trainable_ops()->end());
+      const uint32_t first_trainable_idx = *trainable_ops.cbegin();
+      const uint32_t last_trainable_idx = *trainable_ops.crbegin();
+      const uint32_t trainable_indexes_range = last_trainable_idx - first_trainable_idx + 1;
+      const uint32_t ops_size =
+        circle::GetModel(_context->cbuf().buffer())->subgraphs()->Get(0)->operators()->size();
+
+      if (last_trainable_idx == ops_size - 1 && trainable_indexes_range == trainable_ops.size())
+      {
+        // check if all ops are trainable
+        if (0 == first_trainable_idx)
+        {
+          tri.num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_ALL;
+        }
+        else
+        {
+          tri.num_of_trainable_ops = trainable_indexes_range;
+        }
+      }
+      else
+      {
+        throw std::runtime_error("Operations to be trained must be from the top of the model");
+      }
+    }
+    else
+    {
+      tri.num_of_trainable_ops = NNFW_TRAIN_TRAINABLE_NONE;
+    }
 
     return tri;
   }

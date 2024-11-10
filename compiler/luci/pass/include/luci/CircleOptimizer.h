@@ -34,12 +34,14 @@ public:
   {
     enum Algorithm
     {
+      FuseAddToFullyConnectedBias,
       FuseAddWithConv,
       FuseAddWithFullyConnected,
       FuseAddWithTConv,
       FuseBatchNormWithConv,
       FuseBatchNormWithDwConv,
       FuseBatchNormWithTConv,
+      FuseMulToFullyConnectedWeights,
       FuseSliceWithTConv,
       FuseBCQ,
       FuseHorizontalFullyConnected,
@@ -47,6 +49,7 @@ public:
       FuseMeanWithMean,
       FuseMulWithConv,
       FuseMulWithDiv,
+      FuseMulWithFullyConnected,
       FuseTransposeWithMean,
       ResolveCustomOpAdd,
       ResolveCustomOpBatchMatMul,
@@ -61,8 +64,11 @@ public:
       FoldFullyConnected,
       FoldDequantize,
       FoldGather,
+      FoldMul,
+      FoldReshape,
       FoldShape,
       FoldSparseToDense,
+      FoldSqueeze,
       ForwardReshapeToUnaryOp,
       ForwardTransposeOp,
       SparsifyTensorPass,
@@ -71,12 +77,16 @@ public:
       FuseActivationFunction,
       FusePRelu,
       FuseGelu,
+      FuseRsqrt,
+      FuseRmsNorm,
+      FuseRoPE,
       ShuffleWeightTo16x1Float32,
       RemoveRedundantTranspose,
       ReplaceMulAddWithDepthwiseConv,
       ReplaceNonConstFCWithBatchMatMul,
       ReplaceSubWithAdd,
       ReplaceWithFCGeluFC,
+      SubstituteExpandDimsToReshape,
       SubstitutePackToReshape,
       SubstitutePadV2ToPad,
       SubstituteSplitVToSplit,
@@ -85,6 +95,7 @@ public:
       ConvertNCHWToNHWC,
       CommonSubExpressionElimination,
       RemoveUnnecessaryAdd,
+      RemoveUnnecessaryCast,
       RemoveUnnecessarySlice,
       RemoveUnnecessaryStridedSlice,
       RemoveUnnecessarySplit,
@@ -92,6 +103,7 @@ public:
       RemoveUnnecessaryTranspose,
       TransformMinMaxToRelu6Pass,
       TransformMinReluToRelu6Pass,
+      TransformSqrtDivToRsqrtMul,
       DecomposeHardSwishPass,
       DecomposeSoftmaxPass,
       SubstituteStridedSliceToReshape,
@@ -99,6 +111,7 @@ public:
       RemoveRedundantQuantize,
       RemoveRedundantReshape,
       RemoveFakeQuant,
+      RemoveQDQForMixedPrecisionOp,
       RemoveQuantDequantSeq,
       RemoveDuplicateConst,
       UnrollUnidirSeqLSTM,
@@ -140,6 +153,8 @@ public:
   void sparsify(loco::Graph *) const;
 
 private:
+  void canonicalize(loco::Graph *) const;
+
   std::unique_ptr<Options> _options;
 };
 

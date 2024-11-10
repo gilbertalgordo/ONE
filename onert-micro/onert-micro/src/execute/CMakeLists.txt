@@ -14,6 +14,14 @@ set(SOURCES
         OMKernelExecutionBuilder.cpp
         OMRuntimeKernel.cpp
         OMUtils.cpp
+        kernels/ReluCommon.cpp
+        kernels/ConvolutionCommon.cpp
+        kernels/MathCommon.cpp
+        kernels/PoolingCommon.cpp
+        kernels/ArgCommon.cpp
+        kernels/ReadKernelDataCommon.cpp
+        kernels/ReshapeCommon.cpp
+        kernels/SpacesBatchesNDCommon.cpp
         )
 
 # Add configure kernels
@@ -65,3 +73,5 @@ list(APPEND TEST_SOURCES OMTestUtils.cpp)
 GTest_AddTest(${OM_EXECUTE_LIB}_kernels_test ${TEST_SOURCES})
 target_include_directories(${OM_EXECUTE_LIB}_kernels_test PUBLIC "${OM_INCLUDE_DIR}")
 target_link_libraries(${OM_EXECUTE_LIB}_kernels_test ${OM_INTERPRETER_LIB})
+target_link_libraries(${OM_EXECUTE_LIB}_kernels_test onert_micro_coverage)
+target_link_libraries(${OM_EXECUTE_LIB} PUBLIC onert_micro_coverage)

@@ -19,6 +19,9 @@
 
 #include <backend/basic/MemoryManager.h>
 
+#include "DisposableTensorIndex.h"
+#include "LayerScopeTensorIndex.h"
+
 namespace onert
 {
 namespace backend
@@ -27,6 +30,63 @@ namespace train
 {
 
 using MemoryManager = backend::basic::MemoryManager;
+
+class TrainableMemoryManager : public MemoryManager
+{
+public:
+  TrainableMemoryManager(uint32_t optimizer_vars_count);
+  virtual ~TrainableMemoryManager() = default;
+
+  void allocate(void);
+  uint8_t *getOptVarBuffer(const ir::OperandIndex &ind, uint32_t pos_var) const;
+
+private:
+  std::shared_ptr<basic::Allocator> _var_mem_alloc;
+  uint32_t _optim_vars_count;
+};
+
+class DisposableMemoryManager
+{
+public:
+  DisposableMemoryManager();
+
+  void allocate(void);
+  uint8_t *getBuffer(const DisposableTensorIndex &ind) const;
+  void deallocate(void) { _mem_alloc->release(); }
+
+  void claimPlan(const DisposableTensorIndex &ind, uint32_t size);
+  void releasePlan(const DisposableTensorIndex &ind);
+
+  std::shared_ptr<basic::Allocator> getMemAlloc() { return _mem_alloc; }
+
+private:
+  basic::IMemoryPlanner<DisposableTensorIndex> *createMemoryPlanner();
+  basic::IMemoryPlanner<DisposableTensorIndex> *createMemoryPlanner(const std::string planner_id);
+
+private:
+  std::shared_ptr<basic::IMemoryPlanner<DisposableTensorIndex>> _mem_planner;
+  std::shared_ptr<basic::Allocator> _mem_alloc;
+};
+
+class LayerScopeMemoryManager
+{
+public:
+  LayerScopeMemoryManager();
+
+  void allocate(void);
+  uint8_t *getBuffer(const LayerScopeTensorIndex &ind) const;
+  void deallocate(void);
+
+  void claimPlan(const LayerScopeTensorIndex &ind, uint32_t size);
+  void releasePlan(const LayerScopeTensorIndex &ind);
+
+private:
+  basic::IMemoryPlanner<LayerScopeTensorIndex> *createMemoryPlanner();
+
+private:
+  std::shared_ptr<basic::IMemoryPlanner<LayerScopeTensorIndex>> _mem_planner;
+  std::shared_ptr<basic::Allocator> _mem_alloc;
+};
 
 } // namespace train
 } // namespace backend

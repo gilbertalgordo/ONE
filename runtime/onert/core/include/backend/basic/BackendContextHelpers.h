@@ -44,9 +44,6 @@ template <typename T_BackendContext> void planTensors(const T_BackendContext &ct
   ir::OperandIndexMap<uint32_t> def_map;
   ir::OperandIndexSequence constants;
 
-  auto model_io =
-    (graph.getInputs() + graph.getOutputs()) | ir::Remove::UNDEFINED | ir::Remove::DUPLICATED;
-
   // Prepare scanning
   graph.operands().iterate([&](const ir::OperandIndex &ind, const ir::Operand &obj) {
     if (ctx.external_operands().contains(ind))
@@ -64,12 +61,7 @@ template <typename T_BackendContext> void planTensors(const T_BackendContext &ct
     {
       // These tensors do not exist in any  (No use and def)
       const auto &info = obj.info();
-      // NOTE Currently we only support NHWC tensors for cpu-common tensors.
-      //      There is no way to get the layout info from the backend context for now.
-      //      When we support NCHW tensors as well, we also need to change tensor info to be
-      //      permuted shape.
-      assert(ctx.operand_layouts().at(ind) == ir::Layout::NHWC);
-      tensor_builder->registerTensorInfo(ind, info, ir::Layout::NHWC);
+      tensor_builder->registerTensorInfo(ind, info);
     }
   });
 
@@ -84,10 +76,8 @@ template <typename T_BackendContext> void planTensors(const T_BackendContext &ct
     tensor_builder->notifyFirstUse(ind);
   }
 
-  for (const auto &pair : def_map)
+  for (const auto &[ind, def_count] : def_map)
   {
-    const auto &ind = pair.first;
-    const auto def_count = pair.second;
     if (def_count == 0)
       tensor_builder->notifyFirstUse(ind);
   }
@@ -95,10 +85,8 @@ template <typename T_BackendContext> void planTensors(const T_BackendContext &ct
   // This is a workaround to keep the operands over the execution
   // (the operands look like they are unused)
   std::vector<ir::OperandIndex> operands_last_until_end;
-  for (const auto &pair : uses_map)
+  for (const auto &[ind, use_count] : uses_map)
   {
-    const auto &ind = pair.first;
-    const auto use_count = pair.second;
     if (use_count == 0)
       operands_last_until_end.push_back(ind);
   }
@@ -194,14 +182,10 @@ template <typename T_BackendContext> ITensorRegistry *genTensors(T_BackendContex
   const ir::Graph &graph = *ctx.graph();
   auto tensor_builder = ctx.tensor_builder;
 
-  auto model_io =
-    (graph.getInputs() + graph.getOutputs()) | ir::Remove::UNDEFINED | ir::Remove::DUPLICATED;
   graph.operands().iterate([&](const ir::OperandIndex &ind, const ir::Operand &obj) {
     if (ctx.external_operands().contains(ind))
       return;
-    // NOTE Assuming there is no layout changes (Always assume NHWC or UNKNOWN)
-    assert(graph.layout() != ir::Layout::NCHW);
-    tensor_builder->registerTensorInfo(ind, obj.info(), ir::Layout::NHWC);
+    tensor_builder->registerTensorInfo(ind, obj.info());
   });
 
   // TODO Get compiler options from compiler, and use it rather than getting it from Env

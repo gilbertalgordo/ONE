@@ -81,6 +81,11 @@ uint32_t CircleGen::nextSubgraph()
   return ind;
 }
 
+uint32_t CircleGen::getCurrentSubgraphOpsSize() const
+{
+  return _subgraph_contexts.back().operators.size();
+}
+
 CircleBuffer CircleGen::finish()
 {
   std::vector<flatbuffers::Offset<circle::SubGraph>> subgraphs;
@@ -275,6 +280,13 @@ uint32_t CircleGen::addOperatorFloorMod(const OperatorParams &params)
                                 circle::BuiltinOptions_NONE, 0);
 }
 
+uint32_t CircleGen::addOperatorGather(const OperatorParams &params, int axis, int batchdim)
+{
+  auto options = circle::CreateGatherOptions(_fbb, axis, batchdim).Union();
+  return addOperatorWithOptions(params, circle::BuiltinOperator_GATHER,
+                                circle::BuiltinOptions_GatherOptions, options);
+}
+
 uint32_t CircleGen::addOperatorGreater(const OperatorParams &params)
 {
   auto options = circle::CreateLessOptions(_fbb).Union();
@@ -322,6 +334,17 @@ uint32_t CircleGen::addOperatorLogSoftmax(const OperatorParams &params)
   auto options = circle::CreateLogSoftmaxOptions(_fbb).Union();
   return addOperatorWithOptions(params, circle::BuiltinOperator_LOG_SOFTMAX,
                                 circle::BuiltinOptions_LogSoftmaxOptions, options);
+}
+
+uint32_t CircleGen::addOperatorMaxPool2D(const OperatorParams &params, circle::Padding padding,
+                                         int stride_w, int stride_h, int filter_w, int filter_h,
+                                         circle::ActivationFunctionType actfn)
+{
+  auto options =
+    circle::CreatePool2DOptions(_fbb, padding, stride_w, stride_h, filter_w, filter_h, actfn)
+      .Union();
+  return addOperatorWithOptions(params, circle::BuiltinOperator_MAX_POOL_2D,
+                                circle::BuiltinOptions_Pool2DOptions, options);
 }
 
 uint32_t CircleGen::addOperatorMean(const OperatorParams &params, bool keep_dims)
@@ -564,6 +587,20 @@ uint32_t CircleGen::addOperatorBatchToSpaceND(const OperatorParams &params)
   auto options = circle::CreateBatchToSpaceNDOptions(_fbb).Union();
   return addOperatorWithOptions(params, circle::BuiltinOperator_BATCH_TO_SPACE_ND,
                                 circle::BuiltinOptions_BatchToSpaceNDOptions, options);
+}
+
+uint32_t CircleGen::addOperatorRmsNorm(const OperatorParams &params, float epsilon)
+{
+  auto options = circle::CreateRmsNormOptions(_fbb, epsilon).Union();
+  return addOperatorWithOptions(params, circle::BuiltinOperator_RMS_NORM,
+                                circle::BuiltinOptions_RmsNormOptions, options);
+}
+
+uint32_t CircleGen::addOperatorRoPE(const OperatorParams &params, circle::RoPEMode mode)
+{
+  auto options = circle::CreateRoPEOptions(_fbb, mode).Union();
+  return addOperatorWithOptions(params, circle::BuiltinOperator_ROPE,
+                                circle::BuiltinOptions_RoPEOptions, options);
 }
 
 // NOTE Please add addOperator functions ABOVE this lie

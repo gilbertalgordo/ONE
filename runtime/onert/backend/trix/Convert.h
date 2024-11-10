@@ -32,14 +32,6 @@ namespace trix
 {
 
 /**
- * @brief Convert type of layout from onert type to npu type
- *
- * @param layout Layout type in onert
- * @return data_layout Layout type in npu
- */
-data_layout convertDataLayout(const ir::Layout layout);
-
-/**
  * @brief Convert type of data from onert type to npu type
  *
  * @param type Data type in onert
@@ -61,7 +53,7 @@ void setDataInfo(const std::vector<T *> &tensors, tensors_data_info *info)
 
   for (uint32_t idx = 0; idx < info->num_info; ++idx)
   {
-    info->info[idx].layout = convertDataLayout(tensors[idx]->layout());
+    info->info[idx].layout = DATA_LAYOUT_NHWC;
     info->info[idx].type = convertDataType(tensors[idx]->data_type());
   }
 }

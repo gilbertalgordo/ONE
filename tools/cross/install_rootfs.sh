@@ -6,7 +6,7 @@ usage()
 {
     echo "Usage: $0 [BuildArch] [LinuxCodeName] [--setproxy=IP] [--skipunmount]"
     echo "BuildArch can be: arm(default), aarch64"
-    echo "LinuxCodeName - optional, Code name for Linux, can be: bionic, focal, jammy"
+    echo "LinuxCodeName - optional, Code name for Linux, can be: focal, jammy, noble"
     echo "                          default is host codename: ${DISTRIB_CODENAME} (DISTRIB_CODENAME in /etc/lsb-release)"
     echo "--setproxy=IP - optional, IP is the proxy server IP address or url with portnumber"
     echo "                           default no proxy. Example: --setproxy=127.1.2.3:8080"
@@ -34,7 +34,6 @@ __UbuntuPackages+=" python3-dev"
 # other development supports
 __UbuntuPackages+=" ocl-icd-opencl-dev"
 __UbuntuPackages+=" libhdf5-dev"
-__UbuntuPackages+=" libboost-all-dev"
 __UbuntuPackages+=" libglib2.0-dev"
 
 # symlinks fixer
@@ -57,14 +56,14 @@ for i in "$@" ; do
             __BuildArch=aarch64
             __QemuArch=arm64
             ;;
-        bionic)
-            __LinuxCodeName=bionic
-            ;;
         focal)
             __LinuxCodeName=focal
             ;;
         jammy)
             __LinuxCodeName=jammy
+            ;;
+        noble)
+            __LinuxCodeName=noble
             ;;
         --setproxy*)
             proxyip="${i#*=}"
@@ -103,7 +102,7 @@ if [ $__IsProxySet == 1 ]; then
 fi
 
 if [[ -n $__LinuxCodeName ]]; then
-    qemu-debootstrap --arch $__QemuArch $__LinuxCodeName $__RootfsDir $__UbuntuRepo
+    debootstrap --arch $__QemuArch $__LinuxCodeName $__RootfsDir $__UbuntuRepo
     cp $__CrossDir/$__BuildArch/sources.list.$__LinuxCodeName $__RootfsDir/etc/apt/sources.list
     chroot $__RootfsDir apt-get update
     chroot $__RootfsDir apt-get -f -y install

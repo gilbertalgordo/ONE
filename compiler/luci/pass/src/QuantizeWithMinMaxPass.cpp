@@ -301,6 +301,7 @@ private:
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleResizeBilinear, input)
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleResizeNearestNeighbor, input)
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleReverseSequence, input)
+  INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleRmsNorm, input)
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleRsqrt, x)
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleSlice, input)
   INSERT_QUANTIZE_TO_UNARY_OP(luci::CircleSoftmax, logits)
@@ -548,12 +549,12 @@ void QuantizeWithMinMaxPass::set_output_type(loco::Graph *g) const
  *
  * Why quantization sequence was determined as above?
  * - Activation and weights should be quantized before bias (1->2->3). Input/Output
- *   dtype can be updated at the end (4->5).
+ *   dtype is updated after all the other nodes are quantzied (4->5).
  * - During activation quantization,
  *   - Backward propagation is performed earlier than forward propagation. This allows
- *     backward-propagated qpram to be overwritten during forward propagation.
- *     We made this decision as Ops for forward propagation (reshape, transpose, ..)
- *     are more common than backward propagation. TODO Check this decision is safe.
+ *     backward-propagated qparam to be overwritten during forward propagation.
+ *     We made the decision because it's more common to propagate qparam forward (reshape,
+ *     transpose) than backward (concat, pad_v2, ..).
  *   - QuantizeSpecialActivation is called before forward propagation to make sure that
  *     the pre-defined qparam values are propagated.
  */
@@ -593,7 +594,7 @@ bool QuantizeWithMinMaxPass::run(loco::Graph *g)
   for (auto node : loco::all_nodes(g))
   {
     auto circle_node = loco::must_cast<luci::CircleNode *>(node);
-    QuantizeActivation qa(_ctx->input_model_dtype, quantize_dtype(circle_node));
+    QuantizeActivation qa(quantize_dtype(circle_node));
     circle_node->accept(&qa);
   }
 
@@ -646,7 +647,7 @@ bool QuantizeWithMinMaxPass::run(loco::Graph *g)
     if (circle_node->quantparam() == nullptr)
       continue;
 
-    QuantizeSpecialActivation qsa(_ctx->input_model_dtype, quantize_dtype(circle_node));
+    QuantizeSpecialActivation qsa(quantize_dtype(circle_node));
     circle_node->accept(&qsa);
   }
 

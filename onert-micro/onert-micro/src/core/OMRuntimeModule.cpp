@@ -54,9 +54,9 @@ OMStatus OMRuntimeModule::importModel(const char *model_ptr, const OMConfig &con
   if (model_ptr == nullptr)
     return UnknownError;
 
-  // First - parse reader
-  // Second - load default graph
-  // Third - optimize it until can
+  // 1 - parse reader
+  // 2 - load default graph
+  // 3 - optimize it until can
   // 4 - AllocDeallocPlan creation
   // 5 - KernelConfigure
   // 6 - Allocate inputs
@@ -89,26 +89,53 @@ OMStatus OMRuntimeModule::importModel(const char *model_ptr, const OMConfig &con
 
     runtime_context.setModel(model_ptr, i);
 
+    // Parse and validate WOF file if it is exist
+    // WARNING: setWofFile method of RuntimeContext should follow after setModel.
+    if (config.wof_ptr != nullptr)
+      runtime_context.setWofFile(config.wof_ptr);
+
+    // Parse and validate Train Config File if it is exists
+    // WARNING: setTrainConfigFile method of RuntimeContext should follow after setModel.
+    if (config.train_mode and config.training_context.training_config_info_data != nullptr)
+      runtime_context.setTrainConfigFile(config.training_context.training_config_info_data);
+
     // Third - optimize it until can
     status = optimize::OMOptimizer::optimize(runtime_storage, runtime_context, config);
     if (status != Ok)
       return status;
 
     // 4 - AllocDeallocPlan creation
-    status = import::OMExecutionPlanCreator::createExecutionPlan(runtime_storage, runtime_context,
-                                                                 runtime_allocator, config);
+    if (not config.train_mode)
+    {
+      // Non trainable mode
+      status = import::OMExecutionPlanCreator::createExecutionPlan(runtime_storage, runtime_context,
+                                                                   runtime_allocator, config);
+    }
+    else
+    {
+      // Trainable mode
+      status = import::OMExecutionPlanCreator::createForwardExecutionPlan(
+        runtime_storage, runtime_context, runtime_allocator, config);
+    }
     if (status != Ok)
       return status;
+  }
+  for (uint32_t i = 0; i < num_subgraph; ++i)
+  {
+    // Second - load default graph
+    OMRuntimeGraph &graph = _graphs.at(i);
 
+    OMRuntimeContext &runtime_context = graph.getRuntimeContext();
+    OMRuntimeStorage &runtime_storage = graph.getRuntimeStorage();
+    memory::OMRuntimeAllocator &runtime_allocator = graph.getRuntimeAllocator();
     // 5 - KernelConfigure
     import::OMConfigureArgs configure_args = {runtime_storage, runtime_context, 0, config, *this};
 
     status = import::OMKernelConfiguration::configureKernels(configure_args);
     if (status != Ok)
       return status;
-
-    // Done!
   }
+  // Done!
 
   return Ok;
 }
@@ -121,7 +148,7 @@ OMStatus OMRuntimeModule::allocateInputs()
   return _graphs.at(0).allocateGraphInputs();
 }
 
-OMStatus OMRuntimeModule::run()
+OMStatus OMRuntimeModule::run(const OMConfig &config)
 {
   OMStatus status = Ok;
 
@@ -131,9 +158,13 @@ OMStatus OMRuntimeModule::run()
   core::OMRuntimeGraph &main_graph = _graphs.at(0);
 
   execute::OMExecuteArgs execute_args = {main_graph.getRuntimeStorage(),
-                                         main_graph.getRuntimeContext(), 0, *this};
+                                         main_graph.getRuntimeContext(),
+                                         0,
+                                         *this,
+                                         config.training_context.num_of_train_layers,
+                                         config.train_mode};
 
-  status = execute::OMKernelExecute::executeKernel(execute_args, main_graph.getRuntimeAllocator());
+  status = execute::OMKernelExecute::runForward(execute_args, main_graph.getRuntimeAllocator());
   if (status != Ok)
     return status;
 

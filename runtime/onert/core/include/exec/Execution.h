@@ -24,7 +24,7 @@
 #include "backend/train/ITrainableTensor.h"
 #include "ir/Layout.h"
 #include "exec/IExecutors.h"
-#include "IODescription.h"
+#include "ExecutionContext.h"
 
 #include <thread>
 #include <deque>
@@ -68,44 +68,35 @@ public:
    * @param[in] index   Input index
    * @param[in] buffer  Input data's buffer pointer
    * @param[in] length  Input data's length
-   * @param[in] layout  Input data's data format
    */
-  void setInput(const ir::IOIndex &index, const void *buffer, size_t length,
-                ir::Layout layout = ir::Layout::NHWC);
+  void setInput(const ir::IOIndex &index, const void *buffer, size_t length);
 
   /**
    * @brief     Set input data's information, especially to specify unknown dimensions on model
    * build time.
    * @param[in] index   Input index
-   * @param[in] type    Input data's type info
    * @param[in] shape   Input data's shape
    * @param[in] buffer  Input data's buffer pointer
    * @param[in] length  Input data's length
-   * @param[in] layout  Input data's data format
    */
-  void setInput(const ir::IOIndex &index, const ir::TypeInfo &type, const ir::Shape &shape,
-                const void *buffer, size_t length, ir::Layout layout = ir::Layout::NHWC);
+  void setInput(const ir::IOIndex &index, const ir::Shape &shape, const void *buffer,
+                size_t length);
   /**
    * @brief     Set output data's information
    * @param[in] index   Output index
    * @param[in] buffer  Output data's buffer pointer
    * @param[in] length  Output data's length
-   * @param[in] layout  Output data's data format
    */
-  void setOutput(const ir::IOIndex &index, void *buffer, size_t length,
-                 ir::Layout layout = ir::Layout::NHWC);
+  void setOutput(const ir::IOIndex &index, void *buffer, size_t length);
   /**
    * @brief     Set output data's information, especially to specify unknown dimensions on model
    * build time.
    * @param[in] index   Output index
-   * @param[in] type    Output data's type info
    * @param[in] shape   Output data's shape
    * @param[in] buffer  Output data's buffer pointer
    * @param[in] length  Output data's length
-   * @param[in] layout  Output data's data format
    */
-  void setOutput(const ir::IOIndex &index, const ir::TypeInfo &type, const ir::Shape &shape,
-                 void *buffer, size_t length, ir::Layout layout = ir::Layout::NHWC);
+  void setOutput(const ir::IOIndex &index, const ir::Shape &shape, void *buffer, size_t length);
   /**
    * @brief     Set input data's data format
    * @param[in] index   Input index
@@ -118,6 +109,18 @@ public:
    * @param[in] layout  Output data's data format
    */
   void setOutputLayout(const ir::IOIndex &index, ir::Layout layout);
+  /**
+   * @brief     Set input type information
+   * @param[in] index     Input index
+   * @param[in] typeInfo  Input type information
+   */
+  void setInputType(const ir::IOIndex &index, const ir::TypeInfo &typeInfo);
+  /**
+   * @brief     Set output type information
+   * @param[in] index     Output index
+   * @param[in] typeInfo  Output type information
+   */
+  void setOutputType(const ir::IOIndex &index, const ir::TypeInfo &typeInfo);
   /**
    * @brief  Execution
    * @note   It should be called after setting input and output buffer
@@ -173,13 +176,15 @@ public:
   size_t getInputTotalSize(ir::IOIndex ind) const;
   size_t getOutputTotalSize(ir::IOIndex ind) const;
 
+  ExecutionOptions &executionOptions() { return _ctx.options; }
+
 private:
   const IExecutor *entryExecutor() const { return _executors->entryExecutor(); };
   IExecutor *entryExecutor() { return _executors->entryExecutor(); };
 
 private:
   const std::shared_ptr<IExecutors> _executors;
-  IODescription _io_desc;
+  ExecutionContext _ctx;
   std::unique_ptr<std::thread> _exec_thread;
   bool finished{false};
 };

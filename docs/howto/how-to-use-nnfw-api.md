@@ -10,7 +10,7 @@ Please see [model2nnpkg](https://github.com/Samsung/ONE/tree/master/tools/nnpack
 
 ## Build app with NNFW API
 
-Here are basic steps to build app with [NNFW C API](https://github.com/Samsung/ONE/blob/master/runtime/onert/api/include/nnfw.h)
+Here are basic steps to build app with [NNFW C API](https://github.com/Samsung/ONE/blob/master/runtime/onert/api/nnfw/include/nnfw.h)
 
 1) Initialize nnfw_session
 ``` c
@@ -21,11 +21,11 @@ nnfw_create_session(&session);
 ``` c
 nnfw_load_model_from_file(session, nnpackage_path);
 ```
-3) (Optional) Assign a specific backend to operations
+3) (Optional) Assign a specific backend
 ``` c
-  // Use 'acl_neon' backend for CONV_2D and 'cpu' for otherwise.
+  // Use 'acl_neon' backend only
   // Note that defalut backend is 'cpu'.
-  nnfw_set_op_backend(session, "CONV_2D", "acl_neon");
+  nnfw_set_available_backends(session, "acl_neon");
 ```
 
 4) Compilation

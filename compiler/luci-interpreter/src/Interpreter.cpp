@@ -125,6 +125,20 @@ void Interpreter::readOutputTensor(const luci::CircleOutput *output_node, void *
     tensor->readData(data, data_size);
 }
 
+size_t Interpreter::getOutputTensorSize(const luci::CircleOutput *output_node)
+{
+  Tensor *tensor = _runtime_module->getOutputTensors()[output_node->index()];
+  if (tensor == nullptr)
+  {
+    const std::string &name = output_node->name();
+    throw std::runtime_error("Cannot find tensor size for output node named \"" + name + "\".");
+  }
+
+  size_t tensor_size = luci_interpreter::getDataTypeSize(tensor->element_type());
+  tensor_size *= tensor->shape().num_elements();
+  return tensor_size;
+}
+
 void Interpreter::interpret() { _runtime_module->execute(); }
 
 void Interpreter::attachObserver(ExecutionObserver *observer)

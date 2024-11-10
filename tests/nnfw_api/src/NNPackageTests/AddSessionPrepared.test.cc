@@ -136,8 +136,8 @@ TEST_F(ValidationTestAddSessionPrepared, neg_set_input_001)
 TEST_F(ValidationTestAddSessionPrepared, neg_set_input_002)
 {
   char input[1]; // buffer size is too small
-  ASSERT_EQ(nnfw_set_input(_session, 0, NNFW_TYPE_TENSOR_FLOAT32, input, sizeof(input)),
-            NNFW_STATUS_ERROR);
+  NNFW_ENSURE_SUCCESS(nnfw_set_input(_session, 0, NNFW_TYPE_TENSOR_FLOAT32, input, sizeof(input)));
+  EXPECT_EQ(nnfw_run(_session), NNFW_STATUS_ERROR);
 }
 
 TEST_F(ValidationTestAddSessionPrepared, set_output_001)
@@ -155,8 +155,8 @@ TEST_F(ValidationTestAddSessionPrepared, neg_set_output_001)
 TEST_F(ValidationTestAddSessionPrepared, neg_set_output_002)
 {
   char input[1]; // buffer size is too small
-  ASSERT_EQ(nnfw_set_output(_session, 0, NNFW_TYPE_TENSOR_FLOAT32, input, sizeof(input)),
-            NNFW_STATUS_ERROR);
+  NNFW_ENSURE_SUCCESS(nnfw_set_output(_session, 0, NNFW_TYPE_TENSOR_FLOAT32, input, sizeof(input)));
+  EXPECT_EQ(nnfw_run(_session), NNFW_STATUS_ERROR);
 }
 
 TEST_F(ValidationTestAddSessionPrepared, neg_get_input_size)
@@ -194,8 +194,28 @@ TEST_F(ValidationTestAddSessionPrepared, neg_run_without_set_output)
 TEST_F(ValidationTestAddSessionPrepared, neg_internal_set_config)
 {
   // All arguments are valid, but the session state is wrong
-  ASSERT_EQ(nnfw_set_config(_session, "TRACE_FILEPATH", ""), NNFW_STATUS_INVALID_STATE);
   ASSERT_EQ(nnfw_set_config(_session, "GRAPH_DOT_DUMP", "0"), NNFW_STATUS_INVALID_STATE);
+}
+
+TEST_F(ValidationTestAddSessionPrepared, neg_set_workspace)
+{
+  // Call after prepare
+  EXPECT_EQ(nnfw_set_workspace(_session, "."), NNFW_STATUS_INVALID_STATE);
+}
+
+TEST_F(ValidationTestAddSessionPrepared, neg_set_prepare_config)
+{
+  EXPECT_EQ(nnfw_set_prepare_config(_session, NNFW_PREPARE_CONFIG_PROFILE, nullptr),
+            NNFW_STATUS_INVALID_STATE);
+}
+
+TEST_F(ValidationTestAddSessionPrepared, set_execute_config)
+{
+  // Execution config should set after nnfw_prepare
+  NNFW_ENSURE_SUCCESS(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_DUMP_MINMAX, nullptr));
+  NNFW_ENSURE_SUCCESS(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_TRACE, nullptr));
+  NNFW_ENSURE_SUCCESS(nnfw_set_execute_config(_session, NNFW_RUN_CONFIG_PROFILE, nullptr));
+  SUCCEED();
 }
 
 // TODO Validation check when "nnfw_run" is called without input & output tensor setting

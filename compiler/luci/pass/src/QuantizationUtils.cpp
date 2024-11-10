@@ -101,14 +101,26 @@ void symmetric_wquant_with_minmax_per_layer(CircleConst *node, float min, float 
   }
 }
 
+int32_t max_for_sym_quant(const loco::DataType &type)
+{
+  if (type == loco::DataType::S4)
+    return std::numeric_limits<int8_t>::max() >> 4;
+  else if (type == loco::DataType::S8)
+    return std::numeric_limits<int8_t>::max();
+  else if (type == loco::DataType::S16)
+    return std::numeric_limits<int16_t>::max();
+  else
+    throw std::runtime_error("Unsupported dtype for symmetric quantization");
+};
+
 void compute_sym_scale(float min, float max, float &scaling_factor, float &nudged_min,
                        float &nudged_max, loco::DataType out_type)
 {
   assert(min <= max);
-  assert(out_type == loco::DataType::S8 || out_type == loco::DataType::S16);
+  assert(out_type == loco::DataType::S4 || out_type == loco::DataType::S8 ||
+         out_type == loco::DataType::S16);
 
-  const int32_t kMaxScale = (out_type == loco::DataType::S16) ? std::numeric_limits<int16_t>::max()
-                                                              : std::numeric_limits<int8_t>::max();
+  const int32_t kMaxScale = max_for_sym_quant(out_type);
   const int32_t kMinScale = -kMaxScale;
   const double qmin_double = kMinScale;
   const double qmax_double = kMaxScale;
@@ -515,6 +527,34 @@ void warn_accuracy_with_range(luci::CircleNode *n)
               << "'s quantization may cause accuracy issues" << std::endl;
     ;
   }
+}
+
+bool is_onnx_dequantize_linear(const luci::CircleCustom *node)
+{
+  if (node->numInputs() != 3)
+    return false;
+
+  if (node->numOutputs() != 1)
+    return false;
+
+  if (node->custom_code() != "ONNXDequantizeLinear")
+    return false;
+
+  return true;
+}
+
+bool is_onnx_quantize_linear(const luci::CircleCustom *node)
+{
+  if (node->numInputs() != 3)
+    return false;
+
+  if (node->numOutputs() != 1)
+    return false;
+
+  if (node->custom_code() != "ONNXQuantizeLinear")
+    return false;
+
+  return true;
 }
 
 } // namespace luci

@@ -120,11 +120,13 @@ install(FILES ${MODEL2NNPKG}
               RENAME "model2nnpkg")
 
 # make python directory
-set(ONE_PYTHON_FILES backends.py
+set(ONE_PYTHON_FILES argumentparse.py
+                     backends.py
                      constant.py
                      export_constant.py
                      make_cmd.py
                      CfgRunner.py
+                     Command.py
                      OptionBuilder.py
                      TopologicalSortHelper.py
                      WorkflowRunner.py

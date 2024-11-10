@@ -30,9 +30,9 @@
 #include "ruy/profiler/profiler.h"
 #endif
 
-#include <boost/program_options.hpp>
 #include <cassert>
 #include <chrono>
+#include <climits>
 #include <cstdlib>
 #include <iostream>
 #include <libgen.h>
@@ -49,7 +49,8 @@ void overwriteShapeMap(onert_run::TensorShapeMap &shape_map,
     shape_map[i] = shapes[i];
 }
 
-std::string genQuantizedModelPathFromModelPath(const std::string &model_path, bool is_q16)
+std::string genQuantizedModelPathFromModelPath(const std::string &model_path,
+                                               NNFW_QUANTIZE_TYPE qtype)
 {
   auto const extension_pos = model_path.find(".circle");
   if (extension_pos == std::string::npos)
@@ -57,11 +58,23 @@ std::string genQuantizedModelPathFromModelPath(const std::string &model_path, bo
     std::cerr << "Input model isn't .circle." << std::endl;
     exit(-1);
   }
-  auto const qstring = std::string("_quantized_") + (is_q16 ? "q16" : "q8");
-  return model_path.substr(0, extension_pos) + qstring + ".circle";
+  switch (qtype)
+  {
+    case NNFW_QUANTIZE_TYPE_U8_ASYM:
+      return model_path.substr(0, extension_pos) + "_quantized_q8.circle";
+    case NNFW_QUANTIZE_TYPE_I16_SYM:
+      return model_path.substr(0, extension_pos) + "_quantized_q16.circle";
+    case NNFW_QUANTIZE_TYPE_WO_I8_SYM:
+      return model_path.substr(0, extension_pos) + "_quantized_q8wo.circle";
+    case NNFW_QUANTIZE_TYPE_WO_I16_SYM:
+      return model_path.substr(0, extension_pos) + "_quantized_q16wo.circle";
+  }
+
+  throw std::runtime_error{"Invalid quantization type"};
 }
 
-std::string genQuantizedModelPathFromPackagePath(const std::string &package_path, bool is_q16)
+std::string genQuantizedModelPathFromPackagePath(const std::string &package_path,
+                                                 NNFW_QUANTIZE_TYPE qtype)
 {
   auto package_path_without_slash = package_path;
   if (package_path_without_slash.back() == '/')
@@ -72,8 +85,19 @@ std::string genQuantizedModelPathFromPackagePath(const std::string &package_path
   else
     package_name_pos++;
   auto package_name = package_path_without_slash.substr(package_name_pos);
-  auto const qstring = std::string("_quantized_") + (is_q16 ? "q16" : "q8");
-  return package_path_without_slash + "/" + package_name + qstring + ".circle";
+  switch (qtype)
+  {
+    case NNFW_QUANTIZE_TYPE_U8_ASYM:
+      return package_path_without_slash + "/" + package_name + "_quantized_q8.circle";
+    case NNFW_QUANTIZE_TYPE_I16_SYM:
+      return package_path_without_slash + "/" + package_name + "_quantized_q16.circle";
+    case NNFW_QUANTIZE_TYPE_WO_I8_SYM:
+      return package_path_without_slash + "/" + package_name + "_quantized_q8wo.circle";
+    case NNFW_QUANTIZE_TYPE_WO_I16_SYM:
+      return package_path_without_slash + "/" + package_name + "_quantized_q16wo.circle";
+  }
+
+  throw std::runtime_error{"Invalid quantization type"};
 }
 
 int main(const int argc, char **argv)
@@ -113,16 +137,65 @@ int main(const int argc, char **argv)
         NNPR_ENSURE_STATUS(nnfw_load_model_from_file(session, args.getPackageFilename().c_str()));
     });
 
+    uint32_t num_inputs;
+    uint32_t num_outputs;
+    NNPR_ENSURE_STATUS(nnfw_input_size(session, &num_inputs));
+    NNPR_ENSURE_STATUS(nnfw_output_size(session, &num_outputs));
+
     // Quantize model
     auto quantize = args.getQuantize();
     if (!quantize.empty())
     {
       NNFW_QUANTIZE_TYPE quantize_type = NNFW_QUANTIZE_TYPE_NOT_SET;
-      if (quantize == "int8")
+      if (quantize == "uint8")
         quantize_type = NNFW_QUANTIZE_TYPE_U8_ASYM;
       if (quantize == "int16")
         quantize_type = NNFW_QUANTIZE_TYPE_I16_SYM;
+      if (quantize == "int8_wo")
+        quantize_type = NNFW_QUANTIZE_TYPE_WO_I8_SYM;
+      if (quantize == "int16_wo")
+        quantize_type = NNFW_QUANTIZE_TYPE_WO_I16_SYM;
       NNPR_ENSURE_STATUS(nnfw_set_quantization_type(session, quantize_type));
+
+      if ((quantize_type == NNFW_QUANTIZE_TYPE_U8_ASYM ||
+           quantize_type == NNFW_QUANTIZE_TYPE_I16_SYM) &&
+          args.getMinmaxRuns() > 0)
+      {
+        // Collect min/max data
+        std::vector<Allocation> inputs(num_inputs);
+        std::vector<Allocation> outputs(num_outputs);
+
+        NNPR_ENSURE_STATUS(nnfw_prepare(session));
+        for (uint32_t i = 0; i < num_inputs; i++)
+        {
+          nnfw_tensorinfo ti;
+          NNPR_ENSURE_STATUS(nnfw_input_tensorinfo(session, i, &ti));
+          auto input_size_in_bytes = bufsize_for(&ti);
+          inputs[i].alloc(input_size_in_bytes, ti.dtype);
+          NNPR_ENSURE_STATUS(
+            nnfw_set_input(session, i, ti.dtype, inputs[i].data(), input_size_in_bytes));
+          NNPR_ENSURE_STATUS(nnfw_set_input_layout(session, i, NNFW_LAYOUT_CHANNELS_LAST));
+        }
+        for (uint32_t i = 0; i < num_outputs; i++)
+        {
+          nnfw_tensorinfo ti;
+          NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
+          uint64_t output_size_in_bytes = bufsize_for(&ti);
+          outputs[i].alloc(output_size_in_bytes, ti.dtype);
+          NNPR_ENSURE_STATUS(
+            nnfw_set_output(session, i, ti.dtype, outputs[i].data(), output_size_in_bytes));
+          NNPR_ENSURE_STATUS(nnfw_set_output_layout(session, i, NNFW_LAYOUT_CHANNELS_LAST));
+        }
+
+        auto random_generator = RandomGenerator();
+        nnfw_set_execute_config(session, NNFW_RUN_CONFIG_DUMP_MINMAX, nullptr);
+        for (uint32_t i = 0; i < args.getMinmaxRuns(); i++)
+        {
+          random_generator.generate(inputs);
+          NNPR_ENSURE_STATUS(nnfw_run(session));
+        }
+        nnfw_reset_execute_config(session);
+      }
 
       if (args.getQuantizedModelPath() != "")
         NNPR_ENSURE_STATUS(
@@ -132,13 +205,11 @@ int main(const int argc, char **argv)
         if (args.useSingleModel())
           NNPR_ENSURE_STATUS(nnfw_set_quantized_model_path(
             session,
-            genQuantizedModelPathFromModelPath(args.getModelFilename(), quantize == "int16")
-              .c_str()));
+            genQuantizedModelPathFromModelPath(args.getModelFilename(), quantize_type).c_str()));
         else
           NNPR_ENSURE_STATUS(nnfw_set_quantized_model_path(
-            session,
-            genQuantizedModelPathFromPackagePath(args.getPackageFilename(), quantize == "int16")
-              .c_str()));
+            session, genQuantizedModelPathFromPackagePath(args.getPackageFilename(), quantize_type)
+                       .c_str()));
       }
 
       NNPR_ENSURE_STATUS(nnfw_quantize(session));
@@ -156,95 +227,101 @@ int main(const int argc, char **argv)
     if (available_backends)
       NNPR_ENSURE_STATUS(nnfw_set_available_backends(session, available_backends));
 
-    uint32_t num_inputs;
-    NNPR_ENSURE_STATUS(nnfw_input_size(session, &num_inputs));
-
     // verify input and output
+    for (uint32_t i = 0; i < num_inputs; ++i)
+    {
+      nnfw_tensorinfo ti;
+      NNPR_ENSURE_STATUS(nnfw_input_tensorinfo(session, i, &ti));
 
-    auto verifyInputTypes = [session]() {
-      uint32_t sz;
-      NNPR_ENSURE_STATUS(nnfw_input_size(session, &sz));
-      for (uint32_t i = 0; i < sz; ++i)
+      if (ti.dtype < NNFW_TYPE_TENSOR_FLOAT32 || ti.dtype > NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED)
+      {
+        std::cerr << "E: not supported input type" << std::endl;
+        exit(-1);
+      }
+    }
+
+    for (uint32_t i = 0; i < num_outputs; ++i)
+    {
+      nnfw_tensorinfo ti;
+      NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
+
+      if (ti.dtype < NNFW_TYPE_TENSOR_FLOAT32 || ti.dtype > NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED)
+      {
+        std::cerr << "E: not supported output type" << std::endl;
+        exit(-1);
+      }
+    }
+
+    std::vector<Allocation> inputs(num_inputs);
+    std::vector<Allocation> outputs(num_outputs);
+
+    auto setInputTensorInfo = [&](const TensorShapeMap &tensor_shape_map, bool allocate) {
+      for (uint32_t i = 0; i < num_inputs; i++)
       {
         nnfw_tensorinfo ti;
         NNPR_ENSURE_STATUS(nnfw_input_tensorinfo(session, i, &ti));
 
-        if (ti.dtype < NNFW_TYPE_TENSOR_FLOAT32 || ti.dtype > NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED)
+        // Find updated shape index and update tensor info
+        auto found = tensor_shape_map.find(i);
+        if (found != tensor_shape_map.end())
         {
-          std::cerr << "E: not supported input type" << std::endl;
-          exit(-1);
-        }
-      }
-    };
-
-    auto verifyOutputTypes = [session]() {
-      uint32_t sz;
-      NNPR_ENSURE_STATUS(nnfw_output_size(session, &sz));
-
-      for (uint32_t i = 0; i < sz; ++i)
-      {
-        nnfw_tensorinfo ti;
-        NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
-
-        if (ti.dtype < NNFW_TYPE_TENSOR_FLOAT32 || ti.dtype > NNFW_TYPE_TENSOR_QUANT16_SYMM_SIGNED)
-        {
-          std::cerr << "E: not supported output type" << std::endl;
-          exit(-1);
-        }
-      }
-    };
-
-    auto setTensorInfo = [session](const TensorShapeMap &tensor_shape_map) {
-      for (auto tensor_shape : tensor_shape_map)
-      {
-        auto ind = tensor_shape.first;
-        auto &shape = tensor_shape.second;
-        nnfw_tensorinfo ti;
-        // to fill dtype
-        NNPR_ENSURE_STATUS(nnfw_input_tensorinfo(session, ind, &ti));
-
-        bool set_input = false;
-        if (ti.rank != shape.size())
-        {
-          set_input = true;
-        }
-        else
-        {
-          for (int i = 0; i < ti.rank; i++)
+          auto &shape = found->second;
+          bool set_input = false;
+          if (ti.rank != shape.size())
           {
-            if (ti.dims[i] != shape.at(i))
+            set_input = true;
+          }
+          else
+          {
+            for (int32_t i = 0; i < ti.rank; i++)
             {
-              set_input = true;
-              break;
+              if (ti.dims[i] != shape.at(i))
+              {
+                set_input = true;
+                break;
+              }
             }
           }
-        }
-        if (!set_input)
-          continue;
 
-        ti.rank = shape.size();
-        for (int i = 0; i < ti.rank; i++)
-          ti.dims[i] = shape.at(i);
-        NNPR_ENSURE_STATUS(nnfw_set_input_tensorinfo(session, ind, &ti));
+          if (set_input)
+          {
+            ti.rank = shape.size();
+            for (int i = 0; i < ti.rank; i++)
+              ti.dims[i] = shape.at(i);
+            NNPR_ENSURE_STATUS(nnfw_set_input_tensorinfo(session, i, &ti));
+          }
+        }
+
+        // Allocate memory for input data and set buffer
+        if (allocate)
+        {
+          if (args.getForceFloat())
+            ti.dtype = NNFW_TYPE_TENSOR_FLOAT32;
+
+          auto input_size_in_bytes = bufsize_for(&ti);
+          inputs[i].alloc(input_size_in_bytes, ti.dtype);
+
+          NNPR_ENSURE_STATUS(
+            nnfw_set_input(session, i, ti.dtype, inputs[i].data(), input_size_in_bytes));
+          NNPR_ENSURE_STATUS(nnfw_set_input_layout(session, i, NNFW_LAYOUT_CHANNELS_LAST));
+        }
       }
     };
-
-    verifyInputTypes();
-    verifyOutputTypes();
 
 // set input shape before compilation
 #if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
 
-    auto fill_shape_from_h5 = [&session](const std::string &h5_file, TensorShapeMap &shape_map) {
+    auto fill_shape_from_h5 = [&](const std::string &h5_file, TensorShapeMap &shape_map) {
       assert(!h5_file.empty());
-      auto shapes = H5Formatter(session).readTensorShapes(h5_file);
+      auto shapes = H5Formatter().readTensorShapes(h5_file, num_inputs);
       overwriteShapeMap(shape_map, shapes);
     };
 
     if (args.getWhenToUseH5Shape() == WhenToUseH5Shape::PREPARE)
       fill_shape_from_h5(args.getLoadFilename(), args.getShapeMapForPrepare());
 #endif
-    setTensorInfo(args.getShapeMapForPrepare());
+    // Set shape info, but don't alloc yet
+    setInputTensorInfo(args.getShapeMapForPrepare(), false);
 
     // prepare execution
 
@@ -253,52 +330,50 @@ int main(const int argc, char **argv)
       NNPR_ENSURE_STATUS(nnfw_prepare(session));
     });
 
-// set input shape after compilation and before execution
+    // Set input shape and buffer after compilation and before execution
 #if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
     if (args.getWhenToUseH5Shape() == WhenToUseH5Shape::RUN ||
         (!args.getLoadFilename().empty() && !args.shapeParamProvided()))
       fill_shape_from_h5(args.getLoadFilename(), args.getShapeMapForRun());
 #endif
-    setTensorInfo(args.getShapeMapForRun());
+    setInputTensorInfo(args.getShapeMapForRun(), true);
 
-    // prepare input
-    std::vector<Allocation> inputs(num_inputs);
-#if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
-    if (!args.getLoadFilename().empty())
-      H5Formatter(session).loadInputs(args.getLoadFilename(), inputs);
-    else if (!args.getLoadRawFilename().empty())
-      RawFormatter(session).loadInputs(args.getLoadRawFilename(), inputs);
-    else
-      RandomGenerator(session).generate(inputs);
-#else
+    // Prepare input data
+    auto random_generator = RandomGenerator();
+    bool regenerate_input = false;
     if (!args.getLoadRawFilename().empty())
-      RawFormatter(session).loadInputs(args.getLoadRawFilename(), inputs);
-    else
-      RandomGenerator(session).generate(inputs);
+      RawFormatter().loadInputs(args.getLoadRawFilename(), inputs);
+#if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
+    else if (!args.getLoadFilename().empty())
+      H5Formatter().loadInputs(args.getLoadFilename(), inputs);
 #endif
+    else
+    {
+      random_generator.generate(inputs);
+      // Set regenerate_input to true if input is random data and num_runs > 1
+      // Ignore random generator is not used
+      if (args.getNumRuns() > 1 && !args.getFixedInput())
+        regenerate_input = true;
+    }
 
-    // prepare output
-    uint32_t num_outputs = 0;
-    NNPR_ENSURE_STATUS(nnfw_output_size(session, &num_outputs));
-    std::vector<Allocation> outputs(num_outputs);
+    // Prepare output buffer
     auto output_sizes = args.getOutputSizes();
     for (uint32_t i = 0; i < num_outputs; i++)
     {
       nnfw_tensorinfo ti;
-      uint64_t output_size_in_bytes = 0;
+      NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
+      if (args.getForceFloat())
+        ti.dtype = NNFW_TYPE_TENSOR_FLOAT32;
+
+      uint64_t output_size_in_bytes = bufsize_for(&ti);
       {
         auto found = output_sizes.find(i);
-        if (found == output_sizes.end())
-        {
-          NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
-          output_size_in_bytes = bufsize_for(&ti);
-        }
-        else
+        if (output_sizes.find(i) != output_sizes.end())
         {
           output_size_in_bytes = found->second;
         }
       }
-      outputs[i].alloc(output_size_in_bytes);
+      outputs[i].alloc(output_size_in_bytes, ti.dtype);
       NNPR_ENSURE_STATUS(
         nnfw_set_output(session, i, ti.dtype, outputs[i].data(), output_size_in_bytes));
       NNPR_ENSURE_STATUS(nnfw_set_output_layout(session, i, NNFW_LAYOUT_CHANNELS_LAST));
@@ -315,6 +390,10 @@ int main(const int argc, char **argv)
       phases.run(
         "EXECUTE",
         [&](const benchmark::Phase &, uint32_t) { NNPR_ENSURE_STATUS(nnfw_run(session)); },
+        [&](const benchmark::Phase &, uint32_t) {
+          if (regenerate_input)
+            random_generator.generate(inputs);
+        },
         args.getNumRuns(), true);
     }
     else
@@ -335,19 +414,60 @@ int main(const int argc, char **argv)
           std::cout << "... "
                     << "run " << nth + 1 << " takes " << phase.time[nth] / 1e3 << " ms"
                     << std::endl;
+          if (regenerate_input)
+            random_generator.generate(inputs);
         },
         args.getNumRuns(), true);
+    }
+
+    // Check dump conditions
+    // Do not dump if not fixed random input
+    if (regenerate_input)
+    {
+      bool cannot_dump = false;
+#if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
+      if (!args.getDumpFilename().empty())
+        cannot_dump = true;
+#endif
+      if (!args.getDumpRawInputFilename().empty() || !args.getDumpRawFilename().empty())
+        cannot_dump = true;
+      if (cannot_dump)
+        throw std::runtime_error("Cannot dump input/output with inputs regeneration");
     }
 
 #if defined(ONERT_HAVE_HDF5) && ONERT_HAVE_HDF5 == 1
     // dump output tensors
     if (!args.getDumpFilename().empty())
-      H5Formatter(session).dumpOutputs(args.getDumpFilename(), outputs);
+    {
+      std::vector<TensorShape> output_shapes;
+      auto output_shape_map = args.getOutputShapeMap();
+      for (uint32_t i = 0; i < num_outputs; i++)
+      {
+        nnfw_tensorinfo ti;
+        NNPR_ENSURE_STATUS(nnfw_output_tensorinfo(session, i, &ti));
+
+        auto found = output_shape_map.find(i);
+        if (found != output_shape_map.end())
+        {
+          output_shapes.emplace_back(found->second);
+        }
+        else
+        {
+          TensorShape shape;
+          for (uint32_t j = 0; j < ti.rank; j++)
+            shape.emplace_back(ti.dims[j]);
+
+          output_shapes.emplace_back(shape);
+        }
+      }
+
+      H5Formatter().dumpOutputs(args.getDumpFilename(), outputs, output_shapes);
+    }
 #endif
     if (!args.getDumpRawInputFilename().empty())
-      RawFormatter(session).dumpInputs(args.getDumpRawInputFilename(), inputs);
+      RawFormatter().dumpInputs(args.getDumpRawInputFilename(), inputs);
     if (!args.getDumpRawFilename().empty())
-      RawFormatter(session).dumpOutputs(args.getDumpRawFilename(), outputs);
+      RawFormatter().dumpOutputs(args.getDumpRawFilename(), outputs);
 
     NNPR_ENSURE_STATUS(nnfw_close_session(session));
 
@@ -386,11 +506,6 @@ int main(const int argc, char **argv)
     benchmark::writeResult(result, exec_basename, nnpkg_basename, backend_name);
 
     return 0;
-  }
-  catch (boost::program_options::error &e)
-  {
-    std::cerr << "E: " << e.what() << std::endl;
-    exit(-1);
   }
   catch (std::runtime_error &e)
   {

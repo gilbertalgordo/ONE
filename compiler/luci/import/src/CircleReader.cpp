@@ -70,6 +70,10 @@ loco::DataType luci_datatype(const circle::TensorType type)
       return loco::DataType::S8;
     case circle::TensorType_INT4:
       return loco::DataType::S4;
+    case circle::TensorType_MXFP4:
+      return loco::DataType::MXFP4;
+    case circle::TensorType_MXINT8:
+      return loco::DataType::MXINT8;
     default:
       break;
   }
@@ -124,6 +128,19 @@ MirrorPadMode luci_mirrorpad_mode(const circle::MirrorPadMode mode)
   }
   assert(false);
   return MirrorPadMode::UNDEFINED;
+}
+
+RoPEMode luci_rope_mode(const circle::RoPEMode mode)
+{
+  switch (mode)
+  {
+    case circle::RoPEMode::RoPEMode_GPT_NEOX:
+      return RoPEMode::GPT_NEOX;
+    case circle::RoPEMode::RoPEMode_GPT_J:
+      return RoPEMode::GPT_J;
+  }
+  assert(false);
+  return RoPEMode::UNDEFINED;
 }
 
 luci::CircleFullyConnected::WeightsFormat
@@ -331,6 +348,21 @@ bool CircleReader::parse(const circle::Model *model)
   return true;
 }
 
+bool CircleReader::parse(const circle::Model *model, const uint8_t *data, const size_t size)
+{
+  assert(model != nullptr);
+  assert(data != nullptr);
+  assert(size > 0);
+
+  // for direct pointer access
+  _model = model;
+
+  _file_data = data;
+  _file_size = size;
+
+  return true;
+}
+
 bool CircleReader::select_subgraph(uint32_t sgindex)
 {
   if (num_subgraph() <= sgindex)
@@ -347,6 +379,15 @@ bool CircleReader::select_subgraph(uint32_t sgindex)
   assert(_current_subgraph != nullptr);
 
   return true;
+}
+
+// NOTE need caution not to access beyond _file_data + _file_size.
+// current method doesn't have this guard.
+const uint8_t *CircleReader::file_data(uint64_t offset) const
+{
+  assert(_file_data);
+  assert(offset < _file_size);
+  return (_file_data == nullptr) ? nullptr : _file_data + offset;
 }
 
 template <typename T>

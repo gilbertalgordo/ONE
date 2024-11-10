@@ -20,6 +20,8 @@
 #include "exec/IExecutors.h"
 #include "ir/NNPkg.h"
 #include "IPermuteFunction.h"
+#include "EdgeTensor.h"
+#include "../backend/builtin/UserTensor.h"
 
 namespace std
 {
@@ -77,7 +79,7 @@ public:
 
   const ir::OperandInfo &outputInfo(const ir::IOIndex &index) const override;
 
-  void execute(const IODescription &desc) override;
+  void execute(const ExecutionContext &ctx) override;
 
 private:
   void checkSupportedMultimodel() const;
@@ -85,24 +87,6 @@ private:
   void CreatePkgIOTensors(const IODescription &desc);
   void createPkgIOQuantLayers(const IODescription &desc);
   uint16_t modelCount() const;
-
-private:
-  // TODO Remove this class
-  class PermuteLayer : public exec::IPermuteFunction
-  {
-  public:
-    PermuteLayer(const std::vector<backend::ITensor *> &inputs,
-                 const std::vector<backend::ITensor *> &outputs)
-    {
-      assert(inputs.size() == outputs.size());
-      _src_tensors = inputs;
-      _dst_tensors = outputs;
-    }
-    virtual ~PermuteLayer() {}
-    void optimize() override {}
-  };
-
-  class EdgeTensor;
 
 private:
   std::unordered_map<std::pair<ir::ModelIndex, ir::SubgraphIndex>, std::unique_ptr<IExecutor>>
@@ -158,8 +142,8 @@ private:
   std::unordered_map<ir::IODesc, std::shared_ptr<EdgeTensor>> _pkg_input_quant_tensors;
   std::unordered_map<ir::IODesc, std::shared_ptr<EdgeTensor>> _pkg_output_quant_tensors;
   // IOTensors for user buffer
-  std::unordered_map<ir::IODesc, std::unique_ptr<backend::builtin::IOTensor>> _pkg_input_tensors;
-  std::unordered_map<ir::IODesc, std::unique_ptr<backend::builtin::IOTensor>> _pkg_output_tensors;
+  std::unordered_map<ir::IODesc, std::unique_ptr<backend::builtin::UserTensor>> _pkg_input_tensors;
+  std::unordered_map<ir::IODesc, std::unique_ptr<backend::builtin::UserTensor>> _pkg_output_tensors;
 };
 
 } // namespace exec

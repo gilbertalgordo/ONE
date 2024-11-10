@@ -17,7 +17,9 @@
 /**
  * dummy-compile only tests its interface rather than its functionality.
  *
+ * ./dummy-compile -h
  * ./dummy-compile -o ${OUTPUT_NAME} ${INPUT_NAME}
+ * ./dummy-compile --target {TARGET_NAME} -o ${OUTPUT_NAME} ${INPUT_NAME}
  *
  * NOTE argv[3](INPUT_NAME) is not used here.
  */
@@ -28,21 +30,49 @@
 
 int main(int argc, char **argv)
 {
-  if (argc != 4)
+  if (argc != 2 and argc != 4 and argc != 6)
     return EXIT_FAILURE;
 
-  std::string opt_o{"-o"};
-  std::string argv_1{argv[1]};
+  if (argc == 2)
+  {
+    std::string help_o{"-h"};
+    std::string argv_1{argv[1]};
+    if (help_o != argv_1)
+      return EXIT_FAILURE;
 
-  if (opt_o != argv_1)
-    return EXIT_FAILURE;
+    std::cout << "HELP MESSAGE!!" << std::endl;
+    return EXIT_SUCCESS;
+  }
+  if (argc == 4)
+  {
+    std::string opt_o{"-o"};
+    std::string argv_1{argv[1]};
+    if (opt_o != argv_1)
+      return EXIT_FAILURE;
 
-  std::string output_name{argv[2]};
-  std::ofstream outfile(output_name);
+    std::string output_name{argv[2]};
+    std::ofstream outfile(output_name);
+    outfile << "dummy-compile dummy output!!" << std::endl;
+    outfile.close();
+  }
+  if (argc == 6)
+  {
+    std::string opt_T{"--target"};
+    std::string argv_1{argv[1]};
+    if (opt_T != argv_1)
+      return EXIT_FAILURE;
+    std::string target_name{argv[2]};
 
-  outfile << "dummy-compile dummy output!!" << std::endl;
+    std::string opt_o{"-o"};
+    std::string argv_3{argv[3]};
+    if (opt_o != argv_3)
+      return EXIT_FAILURE;
 
-  outfile.close();
+    std::string output_name{argv[4]};
+    std::ofstream outfile(output_name);
+    outfile << "dummy-compile with " << target_name << " target" << std::endl;
+    outfile.close();
+  }
 
   return EXIT_SUCCESS;
 }

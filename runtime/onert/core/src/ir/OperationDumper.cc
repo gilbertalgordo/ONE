@@ -268,20 +268,8 @@ void OperationDumper::visit(const Pad &node)
 void OperationDumper::visit(const Permute &node)
 {
   std::string permute_type = "Unknown";
-  switch (node.getPermuteType())
-  {
-    case Permute::Type::COPY:
-      permute_type = "Copy";
-      break;
-    case Permute::Type::NHWC_TO_NCHW:
-      permute_type = "NHWC to NCHW";
-      break;
-    case Permute::Type::NCHW_TO_NHWC:
-      permute_type = "NCHW to NHWC";
-      break;
-  }
 
-  VERBOSE(LIR) << "* Permute(" + permute_type + ")" << std::endl;
+  VERBOSE(LIR) << "* " << node.name() << std::endl;
   VERBOSE(LIR) << "  - Inputs : Input(" << node.getInputs().at(0) << ")" << std::endl;
   VERBOSE(LIR) << "  - Output : Output(" << node.getOutputs().at(0) << ")" << std::endl;
 }
@@ -328,6 +316,13 @@ void OperationDumper::visit(const Reverse &node)
   std::string axis =
     "Axis(" + std::to_string(node.getInputs().at(Reverse::Input::AXIS).value()) + ")";
   dumpUnaryInputOp(node, axis);
+}
+
+void OperationDumper::visit(const RmsNorm &node)
+{
+  std::string inputs =
+    "Gamma(" + std::to_string(node.getInputs().at(RmsNorm::Input::GAMMA).value()) + ")";
+  dumpUnaryInputOp(node, inputs);
 }
 
 void OperationDumper::visit(const RNN &node)

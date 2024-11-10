@@ -15,7 +15,7 @@
  */
 
 #include "MinMaxRecorder.h"
-
+#include "MinMaxData.h"
 #include "backend/ITensor.h"
 
 #include <cassert>
@@ -26,10 +26,11 @@ namespace onert
 namespace exec
 {
 
-MinMaxRecorder::MinMaxRecorder(const std::string &minmax_filepath, const ir::Graph &graph,
+MinMaxRecorder::MinMaxRecorder(const std::string &workspace_dir, const ir::Graph &graph,
                                const backend::BackendContexts &backend_contexts)
-  : _graph{graph}, _backend_contexts{backend_contexts}, _h5dumper(minmax_filepath)
+  : _graph{graph}, _backend_contexts{backend_contexts}, _workspace_dir(workspace_dir)
 {
+  // DO NOTHING
 }
 
 std::pair<float, float> minmaxFrom(const backend::ITensor *tensor)
@@ -103,8 +104,8 @@ void MinMaxRecorder::handleJobEnd(IExecutor *, ir::SubgraphIndex subg_idx,
 
   // Otherwise, dump!
   assert(tensor->data_type() == ir::DataType::FLOAT32);
-  auto minmax = minmaxFrom(tensor);
-  _op_minmax.append({subg_idx, op_idx}, minmax.first, minmax.second);
+  auto [min, max] = minmaxFrom(tensor);
+  _op_minmax.append({subg_idx, op_idx}, min, max);
 }
 
 void MinMaxRecorder::handleSubgraphBegin(ir::SubgraphIndex subg_idx)
@@ -112,12 +113,12 @@ void MinMaxRecorder::handleSubgraphBegin(ir::SubgraphIndex subg_idx)
   // Make sure there is only cpu backend except for builtin backend
   std::set<std::string> backend_names;
   backend::ITensorRegistry *tensor_reg = nullptr;
-  for (const auto &pair : _backend_contexts)
+  for (const auto &[backend, bctx] : _backend_contexts)
   {
-    backend_names.insert(pair.first->config()->id());
-    if (pair.first->config()->id() == "cpu")
+    backend_names.insert(backend->config()->id());
+    if (backend->config()->id() == "cpu")
     {
-      tensor_reg = pair.second->tensor_registry.get();
+      tensor_reg = bctx->tensor_registry.get();
     }
   }
   if (backend_names != std::set<std::string>{"builtin", "cpu"})
@@ -143,7 +144,8 @@ void MinMaxRecorder::handleSubgraphEnd(ir::SubgraphIndex)
 {
   // It would be better to dump at the end of model execution, not subgraph
   // But it requires more changes than subgraph.
-  _h5dumper.dump(_input_minmax, _op_minmax);
+  auto raw_dumper = RawMinMaxDumper(_workspace_dir + "/minmax.bin");
+  raw_dumper.dump(_input_minmax, _op_minmax);
 }
 
 } // namespace exec

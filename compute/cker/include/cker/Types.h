@@ -63,6 +63,12 @@ enum class ComparisonOpType
   LessEqual
 };
 
+enum class RoPEMode
+{
+  kGptNeox = 0,
+  kGptJ = 1,
+};
+
 struct PaddingValues
 {
   int16_t width;
@@ -191,6 +197,8 @@ struct BinaryArithmeticOpParam
   // float activation params.
   float float_activation_min = 0;
   float float_activation_max = 0;
+  int64_t int64_activation_min = 0;
+  int64_t int64_activation_max = 0;
 
   // Processed output dimensions.
   // Let input "a" be the one that broadcasts in the faster-changing dimension.
@@ -312,6 +320,11 @@ struct ResizeBilinearParams
   int32_t output_width;
   bool align_corners;
   bool half_pixel_centers;
+};
+
+struct RmsNormParams
+{
+  float epsilon;
 };
 
 struct TransposeConvParams

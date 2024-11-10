@@ -28,7 +28,7 @@ namespace onert_micro
 namespace core
 {
 
-static constexpr int maxTensorShapeSize = 5;
+static constexpr int maxTensorShapeSize = 6;
 
 class OMRuntimeShape
 {
@@ -47,6 +47,14 @@ public:
     if (tensor == nullptr)
       return;
 
+    // Shape is scalar
+    if (tensor->shape() == nullptr or tensor->shape()->size() == 0)
+    {
+      _size = 1;
+      _dims[0] = 1;
+      return;
+    }
+
     _size = tensor->shape()->size();
     std::memcpy(_dims, tensor->shape()->data(), sizeof(int32_t) * _size);
   }
@@ -55,6 +63,8 @@ public:
   // vector.
   inline int flatSize() const
   {
+    if (_size == 0)
+      return 0;
     int buffer_size = 1;
     const int *dims_data = reinterpret_cast<const int *>(dimsData());
     for (int i = 0; i < _size; i++)

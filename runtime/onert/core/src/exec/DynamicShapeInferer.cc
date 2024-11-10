@@ -705,6 +705,26 @@ void DynamicShapeInferer::visit(const ir::operation::Permute & /* op */)
   // on-the-fly, as it must support inter-backend inference/allocation.
 }
 
+void DynamicShapeInferer::visit(const ir::operation::Pool2D &op)
+{
+  // check if input is not dynamic
+  auto input_ind = op.getInputs().at(ir::operation::Pool2D::INPUT);
+  auto input = _tensor_registry->getITensor(input_ind);
+
+  if (!input->is_dynamic())
+    return;
+
+  ir::Shape input_shape = input->getShape();
+
+  auto output_ind = op.getOutputs().at(0);
+  auto output = _tensor_registry->getITensor(output_ind);
+
+  ir::Shape output_shape = shape_inference::inferPoolShape(input_shape, op.param());
+
+  output->applyShape(output_shape);
+  assert(output->buffer() != nullptr);
+}
+
 void DynamicShapeInferer::visit(const ir::operation::Pow &op)
 {
   handleBinaryArithmeticOp(op, op.getInputs().at(ir::operation::Pow::Input::LHS),
@@ -837,8 +857,8 @@ void DynamicShapeInferer::visit(const ir::operation::Reshape &op)
     int32_t *new_shape_buf = reinterpret_cast<int32_t *>(new_shape->buffer());
     assert(new_shape_buf);
 
-    auto output_shape = shape_inference::inferReshapeShape(
-      new_shape_buf, new_shape->getShape().num_elements(), input->getShape().num_elements());
+    auto output_shape = shape_inference::inferReshapeShape(input->getShape(), new_shape_buf,
+                                                           new_shape->getShape().num_elements());
 
     // if shape is changed, change output shape and reallocate output tensor memory
     if (output_shape != output->getShape() || output->buffer() == nullptr)
@@ -853,8 +873,8 @@ void DynamicShapeInferer::visit(const ir::operation::Reshape &op)
   {
     // Let's check the new_shape option
     auto shape = op.param().new_shape;
-    auto output_shape = shape_inference::inferReshapeShape(shape.data(), shape.size(),
-                                                           input->getShape().num_elements());
+    auto output_shape =
+      shape_inference::inferReshapeShape(input->getShape(), shape.data(), shape.size());
 
     // if shape is changed, change output shape and reallocate output tensor memory
     if (output_shape != output->getShape() || output->buffer() == nullptr)

@@ -29,6 +29,24 @@ namespace train
 namespace ops
 {
 
+nnfw::cker::Shape getShape(const IPortableTensor *tensor)
+{
+  if (tensor == nullptr)
+    return nnfw::cker::Shape();
+
+  assert(!tensor->is_dynamic() && "Dynamic tensor is not supported yet");
+
+  const ir::Shape &shape = tensor->get_info().shape();
+  auto rank = shape.rank();
+  nnfw::cker::Shape ret(rank);
+  auto data = ret.DimsData();
+  for (int i = 0; i < rank; ++i)
+  {
+    data[i] = shape.dim(i);
+  }
+  return ret;
+}
+
 const IPortableTensor *backpropActivation(const ir::Activation &activation,
                                           const IPortableTensor *output,
                                           const IPortableTensor *input_backprop,
@@ -77,6 +95,19 @@ void biasGrad(const IPortableTensor *input_backprop, IPortableTensor *bias_grad)
 
   nnfw::cker::functor::biasReductionHelper(input_backprop_buffer, input_backprop_shape,
                                            bias_grad_buffer, bias_grad_shape);
+}
+
+nnfw::cker::train::LossReductionType convertLossReductionType(ir::train::LossReductionType type)
+{
+  switch (type)
+  {
+    case ir::train::LossReductionType::SumOverBatchSize:
+      return nnfw::cker::train::LossReductionType::SUM_OVER_BATCH_SIZE;
+    case ir::train::LossReductionType::Sum:
+      return nnfw::cker::train::LossReductionType::SUM;
+    default:
+      throw std::runtime_error("Unsupported LossReductionType");
+  }
 }
 
 } // namespace ops

@@ -139,7 +139,7 @@ DataFormat get_data_format(loco::Node *node)
 
 bool has_data_format(loco::Node *node) { return node->annot<DataFormatAnnotation>() != nullptr; }
 
-bool check_4d_transpose(loco::Node *node, const std::vector<int32_t> indices)
+bool check_4d_transpose(loco::Node *node, const std::vector<int32_t> &indices)
 {
   assert(indices.size() == 4);
 
@@ -170,48 +170,8 @@ bool check_4d_transpose(loco::Node *node, const std::vector<int32_t> indices)
   return true;
 }
 
-luci::CircleTranspose *create_4d_transpose(luci::CircleNode *node,
-                                           const std::vector<int32_t> indices)
-{
-  assert(indices.size() == 4);
-
-  auto name = node->name();
-  assert(name.length() > 0);
-
-  auto perm = node->graph()->nodes()->create<luci::CircleConst>();
-  perm->dtype(loco::DataType::S32);
-  perm->size<loco::DataType::S32>(4);
-  perm->rank(1);
-  perm->dim(0) = 4;
-  for (uint32_t i = 0; i < 4; i++)
-    perm->at<loco::DataType::S32>(i) = indices[i];
-  perm->shape_status(luci::ShapeStatus::VALID);
-
-  auto make_string = [](const std::vector<int32_t> &nums) {
-    std::string str;
-    for (auto num : nums)
-    {
-      if (str.length() > 0)
-        str += ".";
-      str += std::to_string(num);
-    }
-    return str;
-  };
-
-  auto str_indices = make_string(indices);
-
-  perm->name(name + "/Transpose_" + str_indices + "/perm");
-
-  auto trans = node->graph()->nodes()->create<luci::CircleTranspose>();
-  trans->perm(perm);
-  trans->name(name + "/Transpose_" + str_indices);
-  luci::add_origin(trans, luci::get_origin(node));
-
-  return trans;
-}
-
 luci::CircleTranspose *create_Nd_transpose(luci::CircleNode *node,
-                                           const std::vector<int32_t> indices)
+                                           const std::vector<int32_t> &indices)
 {
   auto name = node->name();
   assert(name.length() > 0);
@@ -280,12 +240,12 @@ luci::CircleConst *create_nhwc_axis(luci::CircleConst *axis)
 
 luci::CircleTranspose *create_post_transpose(luci::CircleNode *node)
 {
-  return create_4d_transpose(node, {0, 3, 1, 2});
+  return create_Nd_transpose(node, {0, 3, 1, 2});
 }
 
 luci::CircleTranspose *create_pre_transpose(luci::CircleNode *node)
 {
-  return create_4d_transpose(node, {0, 2, 3, 1});
+  return create_Nd_transpose(node, {0, 2, 3, 1});
 }
 
 bool check_4d_reshape(loco::Node *node, const std::vector<int32_t> indices)
@@ -335,7 +295,8 @@ uint32_t cal_offset(const loco::TensorShape &dimension, const uint32_t *indices)
          indices[2] * dimension.dim(3).value() + indices[3];
 }
 
-luci::CircleConst *create_NHWC_paddings(luci::CircleConst *paddings)
+template <loco::DataType T>
+luci::CircleConst *create_NHWC_paddings_impl(luci::CircleConst *paddings)
 {
   // paddings shape is (4,2) (it was checked by is_NCHW)
   assert(paddings != nullptr);
@@ -344,19 +305,19 @@ luci::CircleConst *create_NHWC_paddings(luci::CircleConst *paddings)
   assert(paddings->dim(1).value() == 2);
 
   // paddings for idx 0~3 are 0 (checked by is_NCHW)
-  assert(paddings->at<loco::DataType::S32>(0) == 0);
-  assert(paddings->at<loco::DataType::S32>(1) == 0);
-  assert(paddings->at<loco::DataType::S32>(2) == 0);
-  assert(paddings->at<loco::DataType::S32>(3) == 0);
+  assert(paddings->at<T>(0) == 0);
+  assert(paddings->at<T>(1) == 0);
+  assert(paddings->at<T>(2) == 0);
+  assert(paddings->at<T>(3) == 0);
 
   auto name = paddings->name();
   assert(name.length() > 0);
 
   auto nhwc_paddings = paddings->graph()->nodes()->create<luci::CircleConst>();
-  nhwc_paddings->dtype(loco::DataType::S32);
+  nhwc_paddings->dtype(T);
   nhwc_paddings->shape({4, 2});
   nhwc_paddings->shape_status(luci::ShapeStatus::VALID);
-  nhwc_paddings->size<loco::DataType::S32>(4 * 2);
+  nhwc_paddings->size<T>(4 * 2);
   nhwc_paddings->name(name + "_NHWC");
 
   for (uint32_t dim = 0; dim < 4; dim++)
@@ -368,18 +329,33 @@ luci::CircleConst *create_NHWC_paddings(luci::CircleConst *paddings)
       if (dim == 1)
       {
         // get third dimension (H in NCHW)
-        data = paddings->at<loco::DataType::S32>(2 * 2 + i);
+        data = paddings->at<T>(2 * 2 + i);
       }
       else if (dim == 2)
       {
         // get fourth dimension (W in NCHW)
-        data = paddings->at<loco::DataType::S32>(3 * 2 + i);
+        data = paddings->at<T>(3 * 2 + i);
       }
 
-      nhwc_paddings->at<loco::DataType::S32>(dim * 2 + i) = data;
+      nhwc_paddings->at<T>(dim * 2 + i) = data;
     }
   }
   return nhwc_paddings;
+}
+
+luci::CircleConst *create_NHWC_paddings(luci::CircleConst *paddings)
+{
+  assert(paddings != nullptr);
+
+  switch (paddings->dtype())
+  {
+    case loco::DataType::S32:
+      return create_NHWC_paddings_impl<loco::DataType::S32>(paddings);
+    case loco::DataType::S64:
+      return create_NHWC_paddings_impl<loco::DataType::S64>(paddings);
+    default:
+      throw std::runtime_error("Unsupported datatype");
+  }
 }
 
 luci::CircleConst *create_NHWC_rindices(luci::CircleConst *rindices)
@@ -455,30 +431,15 @@ luci::CircleConst *create_NHWC_from_NCHW(luci::CircleConst *constant)
   return nhwc_const;
 }
 
-// NOTE Following conditions can be extended later
-//
-// Find PAD with an NCHW pattern described below
-//   - Paddings shape : [4, 2]
-//   - Paddings value : [[0, 0], [0, 0], [h_t, h_b], [w_t, w_b]]]
-bool is_NCHW(const luci::CirclePad *node)
+template <loco::DataType T> bool check_NC_padding_zero(const luci::CircleConst *node)
 {
-  const auto paddings = dynamic_cast<luci::CircleConst *>(node->paddings());
-  // Non-const paddings is not supported
-  if (paddings == nullptr)
-    return false;
+  assert(node->dtype() == T); // FIX_CALLER_UNLESS
 
-  if (paddings->rank() != 2)
-    return false;
-
-  if (paddings->dim(0).value() != 4 || paddings->dim(1).value() != 2)
-    return false;
-
-  // Only check the first two dimensions
   for (uint32_t dim = 0; dim < 2; dim++)
   {
     for (uint32_t i = 0; i < 2; i++)
     {
-      auto data = paddings->at<loco::DataType::S32>(dim * 2 + i);
+      auto data = node->at<T>(dim * 2 + i);
       if (data != 0)
         return false;
     }
@@ -487,8 +448,12 @@ bool is_NCHW(const luci::CirclePad *node)
   return true;
 }
 
-// NOTE Copied from is_NCHW(CirclePad)
-bool is_NCHW(const luci::CirclePadV2 *node)
+// NOTE Following conditions can be extended later
+//
+// Find PAD with an NCHW pattern described below
+//   - Paddings shape : [4, 2]
+//   - Paddings value : [[0, 0], [0, 0], [h_t, h_b], [w_t, w_b]]]
+template <typename T> bool is_NCHW_pad_op(const T *node)
 {
   const auto paddings = dynamic_cast<luci::CircleConst *>(node->paddings());
   // Non-const paddings is not supported
@@ -501,15 +466,20 @@ bool is_NCHW(const luci::CirclePadV2 *node)
   if (paddings->dim(0).value() != 4 || paddings->dim(1).value() != 2)
     return false;
 
-  // Only check the first two dimensions
-  for (uint32_t dim = 0; dim < 2; dim++)
+  switch (paddings->dtype())
   {
-    for (uint32_t i = 0; i < 2; i++)
-    {
-      auto data = paddings->at<loco::DataType::S32>(dim * 2 + i);
-      if (data != 0)
+    // Only support if N (batch), C(channel) dimension's paddings are zero
+    case loco::DataType::S32:
+      if (not check_NC_padding_zero<loco::DataType::S32>(paddings))
         return false;
-    }
+      break;
+    case loco::DataType::S64:
+      if (not check_NC_padding_zero<loco::DataType::S64>(paddings))
+        return false;
+      break;
+    default:
+      // Unsupported dtype
+      return false;
   }
 
   return true;
@@ -542,14 +512,9 @@ bool is_scalar_const(const loco::Node *node)
   return false;
 }
 
-// NOTE Following conditions can be extended later
-//
-// Find MUL with an NCHW pattern described below
-//   - Input (non-constant) shape : [N, C, H, W]
-//   - Input (constant) shape : broadcastable to [N, C, H, W]
-//   - Output shape : [N, C, H, W]
-bool is_NCHW_with_const(const luci::CircleMul *node, luci::CircleNode *&pred_node,
-                        luci::CircleConst *&multiplier)
+template <class T>
+bool with_broadcastable_const(const T *node, luci::CircleNode *&pred_node,
+                              luci::CircleConst *&constant)
 {
   auto x = dynamic_cast<luci::CircleConst *>(node->x());
   auto y = dynamic_cast<luci::CircleConst *>(node->y());
@@ -557,108 +522,28 @@ bool is_NCHW_with_const(const luci::CircleMul *node, luci::CircleNode *&pred_nod
   if (x != nullptr && y == nullptr)
   {
     pred_node = loco::must_cast<luci::CircleNode *>(node->y());
-    multiplier = x;
+    constant = x;
   }
   else if (x == nullptr && y != nullptr)
   {
     pred_node = loco::must_cast<luci::CircleNode *>(node->x());
-    multiplier = y;
+    constant = y;
   }
   else
   {
-    // Ignore if MUL does not have a multiplier input.
+    // Not support if node's inputs are both non-const, or both const.
     return false;
   }
 
   if (pred_node->rank() != 4)
     return false;
 
-  if (not broadcastable(multiplier, node))
+  if (not broadcastable(constant, node))
     return false;
 
-  multiplier = expand_to_rank_4(multiplier);
+  constant = expand_to_rank_4(constant);
 
   return true;
-}
-
-// We assume ADD with const input is NCHW if,
-// Input shape: (N, C, H, W)
-// Output shape: (N, C, H, W)
-// 1. Const shape is (1, C, 1, 1), (N, C, H, W) or a scalar (1)
-// 2. Input, Output, Const have the same C.
-bool is_NCHW_with_const(const luci::CircleAdd *node, luci::CircleNode *&pred_node,
-                        luci::CircleConst *&beta)
-{
-  auto x = dynamic_cast<luci::CircleConst *>(node->x());
-  auto y = dynamic_cast<luci::CircleConst *>(node->y());
-
-  if (x != nullptr && y == nullptr)
-  {
-    pred_node = loco::must_cast<luci::CircleNode *>(node->y());
-    beta = x;
-  }
-  else if (x == nullptr && y != nullptr)
-  {
-    pred_node = loco::must_cast<luci::CircleNode *>(node->x());
-    beta = y;
-  }
-  else
-  {
-    // Ignore if ADD does not have a constant input.
-    return false;
-  }
-
-  if (pred_node->rank() != 4)
-    return false;
-
-  if (not broadcastable(beta, node))
-    return false;
-
-  beta = expand_to_rank_4(beta);
-
-  return true;
-}
-
-// We assume SUB with const input is NCHW if,
-// Input shape: (N, C, H, W)
-// Output shape: (N, C, H, W)
-// 1. Const shape is (1, C, 1, 1), (N, C, H, W) or a scalar (1)
-// 2. Input, Output, Const have the same C.
-bool is_NCHW_with_const(const luci::CircleSub *node, const luci::CircleNode *pred_node,
-                        const luci::CircleConst *subtract)
-{
-  assert(pred_node != nullptr);
-  assert(subtract != nullptr);
-
-  if (pred_node->rank() != 4)
-    return false;
-
-  const auto const_rank = subtract->rank();
-  // Support Rank 4 or scalar (rank 0 or 1)
-  if (const_rank != 4 && const_rank != 0 && const_rank != 1)
-    return false;
-
-  const auto input_cdim = pred_node->dim(1);
-  const auto output_cdim = node->dim(1);
-
-  if (const_rank == 4)
-  {
-    bool supported_shape = false;
-
-    // Check subtract is (1, C, 1, 1)
-    if (is_same_shape(subtract, {1, node->dim(1), 1, 1}))
-      supported_shape = true;
-
-    // Check subtract is (N, C, H, W)
-    if (is_same_shape(subtract, {node->dim(0), node->dim(1), node->dim(2), node->dim(3)}))
-      supported_shape = true;
-
-    return supported_shape;
-  }
-  if (input_cdim == output_cdim)
-    return true;
-  else
-    return false;
 }
 
 template <class T> bool convert_unary_features(T *node)
@@ -703,6 +588,165 @@ template <class T> bool convert_unary_logits(T *node)
   auto pre_trans = create_pre_transpose(node);
   pre_trans->a(pred_node);
   node->logits(pre_trans);
+
+  // Do shape inference for this node again.
+  node->shape_status(luci::ShapeStatus::UNDEFINED);
+
+  auto post_trans = create_post_transpose(node);
+  loco::replace(node).with(post_trans);
+
+  post_trans->a(node);
+
+  return true;
+}
+
+template <class T> bool convert_eltwise_binary(T *node)
+{
+  LOGGER(l);
+
+  luci::CircleNode *pred_node = nullptr;
+  luci::CircleConst *constant = nullptr;
+  if (with_broadcastable_const(node, pred_node, constant))
+  {
+    assert(constant->rank() == 4); // FIX is_NCHW_with_const unless
+    auto nhwc_const = create_NHWC_from_NCHW(constant);
+    if (nhwc_const == nullptr)
+      return false;
+
+    if (node->x() == constant)
+      node->x(nhwc_const);
+    else
+      node->y(nhwc_const);
+
+    auto pre_trans = create_pre_transpose(node);
+    pre_trans->a(pred_node);
+
+    if (node->x() == pred_node)
+      node->x(pre_trans);
+    else
+      node->y(pre_trans);
+  }
+  else if (constant == nullptr)
+  {
+    // Only support for input rank 4
+    auto input_x = loco::must_cast<luci::CircleNode *>(node->x());
+    if (input_x->rank() != 4)
+      return false;
+    auto input_y = loco::must_cast<luci::CircleNode *>(node->y());
+    if (input_y->rank() != 4)
+      return false;
+
+    auto pre_trans_x = create_pre_transpose(node);
+    pre_trans_x->a(input_x);
+    node->x(pre_trans_x);
+
+    auto pre_trans_y = create_pre_transpose(node);
+    pre_trans_y->a(input_y);
+    node->y(pre_trans_y);
+  }
+  else
+  {
+    return false;
+  }
+
+  // Do shape inference for this node again.
+  node->shape_status(luci::ShapeStatus::UNDEFINED);
+
+  auto post_trans = create_post_transpose(node);
+  loco::replace(node).with(post_trans);
+
+  post_trans->a(node);
+  return true;
+}
+
+template <class T> bool convert_reduction(T *node)
+{
+  auto input = loco::must_cast<luci::CircleNode *>(node->input());
+  if (input->rank() != 4)
+    return false;
+
+  auto rindices = dynamic_cast<luci::CircleConst *>(node->reduction_indices());
+  if (not rindices)
+    return false;
+
+  auto nhwc_rindices = create_NHWC_rindices(rindices);
+  if (not nhwc_rindices)
+    return false;
+
+  auto pre_trans = create_pre_transpose(node);
+  pre_trans->a(input);
+  node->input(pre_trans);
+
+  // Do shape inference for this node again.
+  node->shape_status(luci::ShapeStatus::UNDEFINED);
+
+  node->reduction_indices(nhwc_rindices);
+
+  if (node->keep_dims())
+  {
+    auto post_trans = create_post_transpose(node);
+    loco::replace(node).with(post_trans);
+
+    post_trans->a(node);
+
+    return true;
+  }
+
+  // node->keep_dims() == false
+  // 1D output never needs a transpose
+  if (node->rank() <= 1)
+    return true;
+
+  std::vector<bool> reduced_dims_nhwc(4, false);
+  uint32_t num_reduced_indices = nhwc_rindices->size<loco::DataType::S32>();
+
+  for (uint32_t ri = 0; ri < num_reduced_indices; ++ri)
+  {
+    reduced_dims_nhwc[nhwc_rindices->at<loco::DataType::S32>(ri)] = true;
+  }
+
+  // if channel dimension has been reduced, we don't need a transpose
+  if (reduced_dims_nhwc[3])
+    return true;
+
+  // likewise, if both space dimensions are reduced, no transpose is needed
+  if (reduced_dims_nhwc[1] && reduced_dims_nhwc[2])
+    return true;
+
+  std::vector<int32_t> post_trans_ind;
+  // case 1: only N is reduced
+  if (num_reduced_indices == 1 && reduced_dims_nhwc[0])
+    post_trans_ind = {2, 0, 1};
+
+  // case 2: only H or W is reduced
+  if (num_reduced_indices == 1 && (reduced_dims_nhwc[1] || reduced_dims_nhwc[2]))
+    post_trans_ind = {0, 2, 1};
+
+  // case 3: N and either H or W are reduced
+  if (num_reduced_indices == 2)
+    post_trans_ind = {1, 0};
+
+  auto post_trans = create_Nd_transpose(node, post_trans_ind);
+  loco::replace(node).with(post_trans);
+
+  post_trans->a(node);
+
+  return true;
+}
+
+template <class T> bool convert_pad(T *node)
+{
+  if (!is_NCHW_pad_op(node))
+    return false;
+
+  const auto pred_node = loco::must_cast<luci::CircleNode *>(node->input());
+  auto pre_trans = create_pre_transpose(node);
+  pre_trans->a(pred_node);
+  node->input(pre_trans);
+
+  auto nchw_paddings = loco::must_cast<luci::CircleConst *>(node->paddings());
+  const auto nhwc_paddings = create_NHWC_paddings(nchw_paddings);
+  node->paddings(nhwc_paddings);
 
   // Do shape inference for this node again.
   node->shape_status(luci::ShapeStatus::UNDEFINED);
@@ -775,50 +819,7 @@ class ConvertNCHWToNHWC final : public luci::CircleNodeMutableVisitor<bool>
     return true;
   }
 
-  bool visit(luci::CircleAdd *node)
-  {
-    luci::CircleNode *pred_node = nullptr;
-    luci::CircleConst *beta = nullptr;
-
-    if (is_NCHW_with_const(node, pred_node, beta))
-    {
-      assert(beta->rank() == 4); // FIX is_NCHW_with_const unless
-      auto nhwc_const = create_NHWC_from_NCHW(beta);
-      if (nhwc_const == nullptr)
-        return false;
-      node->y(nhwc_const);
-
-      auto pre_trans = create_pre_transpose(node);
-      pre_trans->a(pred_node);
-      node->x(pre_trans);
-    }
-    else if (beta == nullptr)
-    {
-      // Both inputs are not constant.
-      // In this case, we cannot distinguish NCHW from NHWC,
-      // so just insert Transpose Ops.
-      auto pre_trans_x = create_pre_transpose(node);
-      pre_trans_x->a(node->x());
-      node->x(pre_trans_x);
-
-      auto pre_trans_y = create_pre_transpose(node);
-      pre_trans_y->a(node->y());
-      node->y(pre_trans_y);
-    }
-    else
-    {
-      return false;
-    }
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    auto post_trans = create_post_transpose(node);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-    return true;
-  }
+  bool visit(luci::CircleAdd *node) { return convert_eltwise_binary<luci::CircleAdd>(node); }
 
   bool visit(luci::CircleConcatenation *node)
   {
@@ -843,6 +844,8 @@ class ConvertNCHWToNHWC final : public luci::CircleNodeMutableVisitor<bool>
 
     return true;
   }
+
+  bool visit(luci::CircleDiv *node) { return convert_eltwise_binary<luci::CircleDiv>(node); }
 
   bool visit(luci::CircleElu *node) { return convert_unary_features<luci::CircleElu>(node); }
 
@@ -895,80 +898,7 @@ class ConvertNCHWToNHWC final : public luci::CircleNodeMutableVisitor<bool>
     return true;
   }
 
-  bool visit(luci::CircleMean *node)
-  {
-    auto input = loco::must_cast<luci::CircleNode *>(node->input());
-    if (input->rank() != 4)
-      return false;
-
-    auto rindices = dynamic_cast<luci::CircleConst *>(node->reduction_indices());
-    if (not rindices)
-      return false;
-
-    auto nhwc_rindices = create_NHWC_rindices(rindices);
-    if (not nhwc_rindices)
-      return false;
-
-    auto pre_trans = create_pre_transpose(node);
-    pre_trans->a(input);
-    node->input(pre_trans);
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    node->reduction_indices(nhwc_rindices);
-
-    if (node->keep_dims())
-    {
-      auto post_trans = create_post_transpose(node);
-      loco::replace(node).with(post_trans);
-
-      post_trans->a(node);
-
-      return true;
-    }
-
-    // node->keep_dims() == false
-    // 1D output never needs a transpose
-    if (node->rank() <= 1)
-      return true;
-
-    std::vector<bool> reduced_dims_nhwc(4, false);
-    uint32_t num_reduced_indices = nhwc_rindices->size<loco::DataType::S32>();
-
-    for (uint32_t ri = 0; ri < num_reduced_indices; ++ri)
-    {
-      reduced_dims_nhwc[nhwc_rindices->at<loco::DataType::S32>(ri)] = true;
-    }
-
-    // if channel dimension has been reduced, we don't need a transpose
-    if (reduced_dims_nhwc[3])
-      return true;
-
-    // likewise, if both space dimensions are reduced, no transpose is needed
-    if (reduced_dims_nhwc[1] && reduced_dims_nhwc[2])
-      return true;
-
-    std::vector<int32_t> post_trans_ind;
-    // case 1: only N is reduced
-    if (num_reduced_indices == 1 && reduced_dims_nhwc[0])
-      post_trans_ind = {2, 0, 1};
-
-    // case 2: only H or W is reduced
-    if (num_reduced_indices == 1 && (reduced_dims_nhwc[1] || reduced_dims_nhwc[2]))
-      post_trans_ind = {0, 2, 1};
-
-    // case 3: N and either H or W are reduced
-    if (num_reduced_indices == 2)
-      post_trans_ind = {1, 0};
-
-    auto post_trans = create_Nd_transpose(node, post_trans_ind);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-
-    return true;
-  }
+  bool visit(luci::CircleMean *node) { return convert_reduction<luci::CircleMean>(node); }
 
   bool visit(luci::CircleMinimum *node)
   {
@@ -1000,261 +930,19 @@ class ConvertNCHWToNHWC final : public luci::CircleNodeMutableVisitor<bool>
     return true;
   }
 
-  bool visit(luci::CircleMul *node)
-  {
-    LOGGER(l);
+  bool visit(luci::CircleMirrorPad *node) { return convert_pad<luci::CircleMirrorPad>(node); }
 
-    luci::CircleNode *pred_node = nullptr;
-    luci::CircleConst *multiplier = nullptr;
-
-    if (is_NCHW_with_const(node, pred_node, multiplier))
-    {
-      assert(multiplier->rank() == 4); // FIX is_NCHW_with_const unless
-      auto nhwc_const = create_NHWC_from_NCHW(multiplier);
-      if (nhwc_const == nullptr)
-        return false;
-      node->y(nhwc_const);
-
-      auto pre_trans = create_pre_transpose(node);
-      pre_trans->a(pred_node);
-      node->x(pre_trans);
-    }
-    else if (multiplier == nullptr)
-    {
-      // Only support for input rank 4
-      auto input_x = loco::must_cast<luci::CircleNode *>(node->x());
-      if (input_x->rank() != 4)
-        return false;
-      auto input_y = loco::must_cast<luci::CircleNode *>(node->y());
-      if (input_y->rank() != 4)
-        return false;
-
-      auto pre_trans_x = create_pre_transpose(node);
-      pre_trans_x->a(input_x);
-      node->x(pre_trans_x);
-
-      auto pre_trans_y = create_pre_transpose(node);
-      pre_trans_y->a(input_y);
-      node->y(pre_trans_y);
-    }
-    else
-    {
-      return false;
-    }
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    auto post_trans = create_post_transpose(node);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-    return true;
-  }
+  bool visit(luci::CircleMul *node) { return convert_eltwise_binary<luci::CircleMul>(node); }
 
   bool visit(luci::CircleNeg *node) { return convert_unary_x<luci::CircleNeg>(node); }
 
-  bool visit(luci::CirclePad *node)
-  {
-    if (!is_NCHW(node))
-      return false;
+  bool visit(luci::CirclePad *node) { return convert_pad<luci::CirclePad>(node); }
 
-    const auto pred_node = loco::must_cast<luci::CircleNode *>(node->input());
-    auto pre_trans = create_pre_transpose(node);
-    pre_trans->a(pred_node);
-    node->input(pre_trans);
+  bool visit(luci::CirclePadV2 *node) { return convert_pad<luci::CirclePadV2>(node); }
 
-    auto nchw_paddings = loco::must_cast<luci::CircleConst *>(node->paddings());
-    const auto nhwc_paddings = create_NHWC_paddings(nchw_paddings);
-    node->paddings(nhwc_paddings);
+  bool visit(luci::CircleReduceMax *node) { return convert_reduction<luci::CircleReduceMax>(node); }
 
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    auto post_trans = create_post_transpose(node);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-
-    return true;
-  }
-
-  bool visit(luci::CirclePadV2 *node)
-  {
-    if (!is_NCHW(node))
-      return false;
-
-    const auto pred_node = loco::must_cast<luci::CircleNode *>(node->input());
-    auto pre_trans = create_pre_transpose(node);
-    pre_trans->a(pred_node);
-    node->input(pre_trans);
-
-    auto nchw_paddings = loco::must_cast<luci::CircleConst *>(node->paddings());
-    const auto nhwc_paddings = create_NHWC_paddings(nchw_paddings);
-    node->paddings(nhwc_paddings);
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    auto post_trans = create_post_transpose(node);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-
-    return true;
-  }
-
-  // TODO Reduce duplicate code with CircleMean
-  bool visit(luci::CircleReduceMax *node)
-  {
-    auto input = loco::must_cast<luci::CircleNode *>(node->input());
-    if (input->rank() != 4)
-      return false;
-
-    auto rindices = dynamic_cast<luci::CircleConst *>(node->reduction_indices());
-    if (not rindices)
-      return false;
-
-    auto nhwc_rindices = create_NHWC_rindices(rindices);
-    if (not nhwc_rindices)
-      return false;
-
-    auto pre_trans = create_pre_transpose(node);
-    pre_trans->a(input);
-    node->input(pre_trans);
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    node->reduction_indices(nhwc_rindices);
-
-    if (node->keep_dims())
-    {
-      auto post_trans = create_post_transpose(node);
-      loco::replace(node).with(post_trans);
-
-      post_trans->a(node);
-
-      return true;
-    }
-
-    // The below codes handle the cases where node->keep_dims() == false
-    // 1D output never needs a transpose
-    if (node->rank() <= 1)
-      return true;
-
-    std::vector<bool> reduced_dims_nhwc(4, false);
-    uint32_t num_reduced_indices = nhwc_rindices->size<loco::DataType::S32>();
-
-    for (uint32_t ri = 0; ri < num_reduced_indices; ++ri)
-    {
-      reduced_dims_nhwc[nhwc_rindices->at<loco::DataType::S32>(ri)] = true;
-    }
-
-    // if channel dimension has been reduced, we don't need a transpose
-    if (reduced_dims_nhwc[3])
-      return true;
-
-    // likewise, if both space dimensions are reduced, no transpose is needed
-    if (reduced_dims_nhwc[1] && reduced_dims_nhwc[2])
-      return true;
-
-    std::vector<int32_t> post_trans_ind;
-    // case 1: only N is reduced
-    if (num_reduced_indices == 1 && reduced_dims_nhwc[0])
-      post_trans_ind = {2, 0, 1};
-
-    // case 2: only H or W is reduced
-    if (num_reduced_indices == 1 && (reduced_dims_nhwc[1] || reduced_dims_nhwc[2]))
-      post_trans_ind = {0, 2, 1};
-
-    // case 3: N and either H or W are reduced
-    if (num_reduced_indices == 2)
-      post_trans_ind = {1, 0};
-
-    auto post_trans = create_Nd_transpose(node, post_trans_ind);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-
-    return true;
-  }
-
-  // TODO Reduce duplicate codes with CircleReduceMax
-  bool visit(luci::CircleReduceMin *node)
-  {
-    auto input = loco::must_cast<luci::CircleNode *>(node->input());
-    if (input->rank() != 4)
-      return false;
-
-    auto rindices = dynamic_cast<luci::CircleConst *>(node->reduction_indices());
-    if (not rindices)
-      return false;
-
-    auto nhwc_rindices = create_NHWC_rindices(rindices);
-    if (not nhwc_rindices)
-      return false;
-
-    auto pre_trans = create_pre_transpose(node);
-    pre_trans->a(input);
-    node->input(pre_trans);
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    node->reduction_indices(nhwc_rindices);
-
-    if (node->keep_dims())
-    {
-      auto post_trans = create_post_transpose(node);
-      loco::replace(node).with(post_trans);
-
-      post_trans->a(node);
-
-      return true;
-    }
-
-    // The below codes handle the cases where node->keep_dims() == false
-    // 1D output never needs a transpose
-    if (node->rank() <= 1)
-      return true;
-
-    std::vector<bool> reduced_dims_nhwc(4, false);
-    uint32_t num_reduced_indices = nhwc_rindices->size<loco::DataType::S32>();
-
-    for (uint32_t ri = 0; ri < num_reduced_indices; ++ri)
-    {
-      reduced_dims_nhwc[nhwc_rindices->at<loco::DataType::S32>(ri)] = true;
-    }
-
-    // if channel dimension has been reduced, we don't need a transpose
-    if (reduced_dims_nhwc[3])
-      return true;
-
-    // likewise, if both space dimensions are reduced, no transpose is needed
-    if (reduced_dims_nhwc[1] && reduced_dims_nhwc[2])
-      return true;
-
-    std::vector<int32_t> post_trans_ind;
-    // case 1: only N is reduced
-    if (num_reduced_indices == 1 && reduced_dims_nhwc[0])
-      post_trans_ind = {2, 0, 1};
-
-    // case 2: only H or W is reduced
-    if (num_reduced_indices == 1 && (reduced_dims_nhwc[1] || reduced_dims_nhwc[2]))
-      post_trans_ind = {0, 2, 1};
-
-    // case 3: N and either H or W are reduced
-    if (num_reduced_indices == 2)
-      post_trans_ind = {1, 0};
-
-    auto post_trans = create_Nd_transpose(node, post_trans_ind);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-
-    return true;
-  }
+  bool visit(luci::CircleReduceMin *node) { return convert_reduction<luci::CircleReduceMin>(node); }
 
   bool visit(luci::CircleRelu *node) { return convert_unary_features<luci::CircleRelu>(node); }
 
@@ -1334,88 +1022,7 @@ class ConvertNCHWToNHWC final : public luci::CircleNodeMutableVisitor<bool>
     return true;
   }
 
-  bool visit(luci::CircleSub *node)
-  {
-    luci::CircleNode *pred_node = nullptr;
-    luci::CircleConst *subtract = nullptr;
-
-    auto const_x = dynamic_cast<luci::CircleConst *>(node->x());
-    auto const_y = dynamic_cast<luci::CircleConst *>(node->y());
-
-    if (const_x != nullptr && const_y == nullptr)
-    {
-      // case of subtract - pred_node
-      pred_node = loco::must_cast<luci::CircleNode *>(node->y());
-      subtract = const_x;
-
-      if (!is_NCHW_with_const(node, pred_node, subtract))
-        return false;
-
-      auto pre_trans = create_pre_transpose(node);
-      pre_trans->a(pred_node);
-
-      if (subtract->rank() == 4)
-      {
-        auto nhwc_const = create_NHWC_from_NCHW(subtract);
-        if (nhwc_const == nullptr)
-          return false;
-        node->x(nhwc_const);
-      }
-      node->y(pre_trans);
-    }
-    else if (const_x == nullptr && const_y != nullptr)
-    {
-      // case of pred_node - subtract
-      pred_node = loco::must_cast<luci::CircleNode *>(node->x());
-      subtract = const_y;
-
-      if (!is_NCHW_with_const(node, pred_node, subtract))
-        return false;
-
-      auto pre_trans = create_pre_transpose(node);
-      pre_trans->a(pred_node);
-
-      if (subtract->rank() == 4)
-      {
-        auto nhwc_const = create_NHWC_from_NCHW(subtract);
-        if (nhwc_const == nullptr)
-          return false;
-        node->y(nhwc_const);
-      }
-
-      node->x(pre_trans);
-    }
-    else if (const_x == nullptr && const_y == nullptr)
-    {
-      // Both inputs are not constant.
-      // In this case, we cannot distinguish NCHW from NHWC,
-      // so just insert Transpose Ops.
-      // Only support for input rank 4.
-      auto input_x = loco::must_cast<luci::CircleNode *>(node->x());
-      if (input_x->rank() != 4)
-        return false;
-      auto input_y = loco::must_cast<luci::CircleNode *>(node->y());
-      if (input_y->rank() != 4)
-        return false;
-
-      auto pre_trans_x = create_pre_transpose(node);
-      pre_trans_x->a(input_x);
-      node->x(pre_trans_x);
-
-      auto pre_trans_y = create_pre_transpose(node);
-      pre_trans_y->a(input_y);
-      node->y(pre_trans_y);
-    }
-
-    // Do shape inference for this node again.
-    node->shape_status(luci::ShapeStatus::UNDEFINED);
-
-    auto post_trans = create_post_transpose(node);
-    loco::replace(node).with(post_trans);
-
-    post_trans->a(node);
-    return true;
-  }
+  bool visit(luci::CircleSub *node) { return convert_eltwise_binary<luci::CircleSub>(node); }
 };
 
 } // namespace
@@ -1525,6 +1132,7 @@ bool ConvertNCHWToNHWCPass::run(loco::Graph *g)
       // tflite/circle assumes the last channel is always axis
       case luci::CircleOpcode::ADD:
       case luci::CircleOpcode::CONCATENATION:
+      case luci::CircleOpcode::DIV:
       case luci::CircleOpcode::ELU:
       case luci::CircleOpcode::GELU:
       case luci::CircleOpcode::LEAKY_RELU:
@@ -1532,6 +1140,7 @@ bool ConvertNCHWToNHWCPass::run(loco::Graph *g)
       case luci::CircleOpcode::MAXIMUM:
       case luci::CircleOpcode::MEAN:
       case luci::CircleOpcode::MINIMUM:
+      case luci::CircleOpcode::MIRROR_PAD:
       case luci::CircleOpcode::MUL:
       case luci::CircleOpcode::NEG:
       case luci::CircleOpcode::PAD:

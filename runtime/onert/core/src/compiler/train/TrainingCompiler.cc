@@ -45,10 +45,9 @@ namespace compiler
 namespace train
 {
 
-TrainingCompiler::TrainingCompiler(const std::shared_ptr<ir::NNPkg> &nnpkg,
-                                   std::vector<std::unique_ptr<CompilerOptions>> &copts,
+TrainingCompiler::TrainingCompiler(const std::shared_ptr<ir::NNPkg> &nnpkg, CompilerOptions *copts,
                                    const ir::train::TrainingInfo &training_info)
-  : _model{nnpkg->primary_model()}, _options{copts[0].get()}, _training_info{training_info}
+  : _model{nnpkg->primary_model()}, _options{copts}, _training_info{training_info}
 {
   if (nnpkg->model_count() > 1)
     throw std::runtime_error("TrainingCompiler does not support multiple models yet");
@@ -74,12 +73,6 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
 
     if (_options->executor != "Dataflow")
       throw std::runtime_error("Profiling mode works only with 'Dataflow' executor");
-  }
-
-  if (!_options->minmax_filepath.empty())
-  {
-    if (_options->executor != "Linear")
-      throw std::runtime_error("Recording minmax works only with Linear executor");
   }
 
   _options->forceInternalOptions();
@@ -114,13 +107,29 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
 
       // Convert operations to trainable operations
       auto converter = TrainableOperationConverter{*trainable_subg, &_training_info};
+      ir::OperationIndex min_trainable_op_idx;
       subg.operations().iterate(
         [&](const onert::ir::OperationIndex &op_index, const onert::ir::IOperation &op) {
           auto trainable_op = converter(op);
+          if (_training_info.getTrainableOps().find(op_index) !=
+              std::end(_training_info.getTrainableOps()))
+          {
+            trainable_op->enableWeightsUpdate();
+            if (op_index.value() < min_trainable_op_idx.value())
+            {
+              min_trainable_op_idx = op_index;
+            }
+          }
           auto gen_index = trainable_subg->replaceOperation(op_index, std::move(trainable_op));
           UNUSED_RELEASE(gen_index);
           assert(gen_index == op_index);
         });
+
+      for (ir::OperationIndex idx{min_trainable_op_idx};
+           idx.value() < trainable_subg->operations().size(); idx++)
+      {
+        trainable_subg->enableBackward(idx);
+      }
 
       trainable_subgraphs[subg_index] = std::move(trainable_subg);
     });
@@ -138,30 +147,32 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
   auto dump_level = static_cast<dumper::dot::DotDumper::Level>(_options->graph_dump_level);
   onert::dumper::dot::DotDumper dot_dumper(dump_level);
 
-  for (const auto &pair : trainable_subgraphs)
+  for (const auto &[subg_index, subg] : trainable_subgraphs)
   {
-    const auto &subg_index = pair.first;
-    const auto &subg = pair.second;
     dot_dumper.dump(*subg, nnfw::misc::str("before_loss_insertion-", subg_index.value()));
   }
 
   // Apply pass for trainable subgraphs
-  for (auto &&pair : trainable_subgraphs)
+  for (auto &&[subg_index, trainable_subg] : trainable_subgraphs)
   {
-    auto trainable_subg = pair.second;
-    auto subg_index = pair.first;
-
     compiler::pass::PassRunner{}
       .append(std::make_unique<train::pass::LossInsertionPass>(*trainable_subg, &_training_info,
                                                                subg_index))
       .run();
   }
 
-  for (const auto &pair : trainable_subgraphs)
+  for (const auto &[subg_index, subg] : trainable_subgraphs)
   {
-    const auto &subg_index = pair.first;
-    const auto &subg = pair.second;
     dot_dumper.dump(*subg, nnfw::misc::str("after_loss_insertion-", subg_index.value()));
+  }
+
+  for (auto &&[subg_index, subg] : trainable_subgraphs)
+  {
+    subg->updateGraphDependency();
+    subg->verify();
+
+    dot_dumper.dump(*subg,
+                    nnfw::misc::str("after_initializing_training_usedefs-", subg_index.value()));
   }
 
   // Change input shape according to batch_size
@@ -191,24 +202,18 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
   std::unordered_map<ir::SubgraphIndex, std::unique_ptr<compiler::train::LoweredTrainableGraph>>
     lowered_subgs;
   {
-    for (auto &&pair : trainable_subgraphs)
+    for (auto &&[subg_index, trainable_subg] : trainable_subgraphs)
     {
-      auto &subg_index = pair.first;
-      auto trainable_subg = pair.second;
-
       // Lower: Assign backend
       lowered_subgs[subg_index] =
         std::make_unique<compiler::train::LoweredTrainableGraph>(*trainable_subg, *_options);
       // Set tracing_ctx for copied graph
-      if (tracing_ctx != nullptr)
-        tracing_ctx->setSubgraphIndex(&(lowered_subgs[subg_index]->graph()), subg_index.value());
+      tracing_ctx->setSubgraphIndex(&(lowered_subgs[subg_index]->graph()), subg_index.value());
     }
   }
 
-  for (const auto &pair : lowered_subgs)
+  for (const auto &[subg_index, lowered_subg] : lowered_subgs)
   {
-    const auto &subg_index = pair.first;
-    const auto &lowered_subg = pair.second;
     dot_dumper.dump(*lowered_subg, nnfw::misc::str("after_lower_subg-", subg_index.value()));
   }
 
@@ -268,11 +273,9 @@ std::shared_ptr<CompilerArtifact> TrainingCompiler::compile(void)
    *  Backend independent analysis & optimization phase finished
    *************************************************************/
   auto executors = std::make_shared<exec::train::TrainableExecutors>();
-  for (auto &&pair : lowered_subgs)
+  for (auto &&[subg_index, lowered_subg] : lowered_subgs)
   {
     auto const model_index = ir::ModelIndex{0};
-    auto const subg_index = pair.first;
-    auto &lowered_subg = pair.second;
     auto const indexed_ranks = lowered_subg->indexed_ranks();
 
     ir::OperationDumper dumper("Executor generation of Subgraph " +

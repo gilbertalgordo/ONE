@@ -173,6 +173,7 @@ public:
   luci::CircleNode *visit(const luci::CircleReduceMin *) final;
   luci::CircleNode *visit(const luci::CircleReduceProd *) final;
   luci::CircleNode *visit(const luci::CircleRelu *) final;
+  luci::CircleNode *visit(const luci::CircleRelu0To1 *) final;
   luci::CircleNode *visit(const luci::CircleRelu6 *) final;
   luci::CircleNode *visit(const luci::CircleReluN1To1 *) final;
   luci::CircleNode *visit(const luci::CircleReshape *) final;
@@ -258,6 +259,8 @@ public:
   luci::CircleNode *visit(const luci::CircleBCQGather *) final;
   luci::CircleNode *visit(const luci::CircleInstanceNorm *) final;
   luci::CircleNode *visit(const luci::CircleGRU *) final;
+  luci::CircleNode *visit(const luci::CircleRmsNorm *) final;
+  luci::CircleNode *visit(const luci::CircleRoPE *) final;
 
   // NOTE CircleInput and CircleOutput are not handled here as these need
   //      link with graph I/O

@@ -16,11 +16,8 @@ target_link_libraries(${LIB_ONERT_BACKEND_TRIX} PRIVATE trix_engine)
 target_link_libraries(${LIB_ONERT_BACKEND_TRIX} PRIVATE nnfw_common)
 target_link_libraries(${LIB_ONERT_BACKEND_TRIX} PRIVATE nnfw_coverage)
 
-set_target_properties(${LIB_ONERT_BACKEND_TRIX} PROPERTIES OUTPUT_NAME backend_trix)
+set_target_properties(${LIB_ONERT_BACKEND_TRIX} PROPERTIES
+  OUTPUT_NAME backend_trix
+  INSTALL_RPATH "$ORIGIN:$ORIGIN/..")
 
-if(CMAKE_BUILD_TYPE_LC STREQUAL "release")
-  add_custom_command(TARGET ${LIB_ONERT_BACKEND_TRIX} POST_BUILD
-                     COMMAND ${CMAKE_STRIP} "--strip-unneeded" $<TARGET_FILE_NAME:${LIB_ONERT_BACKEND_TRIX}>)
-endif()
-
-install(TARGETS ${LIB_ONERT_BACKEND_TRIX} DESTINATION lib)
+install(TARGETS ${LIB_ONERT_BACKEND_TRIX} DESTINATION lib/nnfw/backend)

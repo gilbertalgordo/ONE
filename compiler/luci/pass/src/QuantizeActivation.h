@@ -27,12 +27,8 @@ namespace luci
  */
 struct QuantizeActivation final : public luci::CircleNodeMutableVisitor<void>
 {
-  QuantizeActivation(loco::DataType input, loco::DataType output)
-    : input_type(input), output_type(output)
-  {
-  }
+  QuantizeActivation(loco::DataType output) : output_type(output) {}
 
-  loco::DataType input_type;
   loco::DataType output_type;
 
   // Quantize each node using recorded min/max
@@ -44,12 +40,8 @@ struct QuantizeActivation final : public luci::CircleNodeMutableVisitor<void>
  */
 struct QuantizeSpecialActivation final : public luci::CircleNodeMutableVisitor<void>
 {
-  QuantizeSpecialActivation(loco::DataType input, loco::DataType output)
-    : input_type(input), output_type(output)
-  {
-  }
+  QuantizeSpecialActivation(loco::DataType output) : output_type(output) {}
 
-  loco::DataType input_type;
   loco::DataType output_type;
 
   void visit(luci::CircleNode *node);
@@ -83,6 +75,7 @@ private:
   SKIP(luci::CircleFullyConnected)
   SKIP(luci::CircleInstanceNorm)
   SKIP(luci::CirclePRelu)
+  SKIP(luci::CircleRmsNorm)
   SKIP(luci::CircleTransposeConv)
 
   // Handled in PropagateQParamBackwardPass
@@ -109,6 +102,7 @@ private:
   void visit(luci::CircleDepthToSpace *node);
   void visit(luci::CircleElu *node);
   void visit(luci::CircleExp *node);
+  void visit(luci::CircleExpandDims *node);
   void visit(luci::CircleFloor *node);
   void visit(luci::CircleGather *node);
   void visit(luci::CircleGelu *node);
@@ -158,6 +152,7 @@ private:
   void visit(luci::CircleMul *node);
   void visit(luci::CircleNotEqual *node);
   void visit(luci::CirclePow *node);
+  void visit(luci::CircleSelectV2 *node);
   void visit(luci::CircleSub *node);
 
   // AddN has arbitrary number of inputs

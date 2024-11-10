@@ -87,7 +87,8 @@ bool is_quant_act(const luci::CircleNode *node)
 // 1. dtype is not fp32
 // 2. node has qparam
 // NOTE Quantized const can have the following types
-// u8 (weights, activation), s16 (weights, activation), s32 (bias), s64 (bias)
+// s4 (weights), u4 (weights), u8 (weights, activation),
+// s16 (weights, activation), s32 (bias), s64 (bias)
 bool is_quant_const(const luci::CircleConst *node)
 {
   if (node->dtype() == loco::DataType::FLOAT32)
@@ -218,6 +219,7 @@ struct FakeQuantize final : public luci::CircleNodeMutableVisitor<void>
   void visit(luci::CircleRelu6 *node) { fq_activation(node); }
   void visit(luci::CircleResizeBilinear *node) { fq_activation(node); }
   void visit(luci::CircleResizeNearestNeighbor *node) { fq_activation(node); }
+  void visit(luci::CircleRmsNorm *node) { fq_activation(node); }
   void visit(luci::CircleRsqrt *node) { fq_activation(node); }
   void visit(luci::CircleSoftmax *node) { fq_activation(node); }
   void visit(luci::CircleSqrt *node) { fq_activation(node); }

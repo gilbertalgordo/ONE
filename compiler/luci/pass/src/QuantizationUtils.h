@@ -23,6 +23,9 @@
 namespace luci
 {
 
+// Return the max value of dtype for symmetric quantization (int4/int8/int16)
+int32_t max_for_sym_quant(const loco::DataType &type);
+
 // Compute scale using given min/max for symmetric quantization (int8/int16)
 void compute_sym_scale(float min, float max, float &scaling_factor, float &nudged_min,
                        float &nudged_max, loco::DataType out_type = loco::DataType::S16);
@@ -89,6 +92,12 @@ void quant_const(luci::CircleConst *node, loco::DataType quant_type);
 // Check that a node is quantized without significant loss of precision;
 // Emits warnings to log with WARN
 void warn_accuracy_with_range(luci::CircleNode *n);
+
+// Return true if the node is OnnxDequantizeLinear
+bool is_onnx_dequantize_linear(const luci::CircleCustom *node);
+
+// Return true if the node is OnnxQuantizeLinear
+bool is_onnx_quantize_linear(const luci::CircleCustom *node);
 
 } // namespace luci
 

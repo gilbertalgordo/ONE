@@ -62,12 +62,14 @@ public:
   void visit(const operation::EmbeddingLookup &node) override;
   void visit(const operation::ExpandDims &node) override;
   void visit(const operation::Fill &node) override;
+  void visit(const operation::Gather &node) override;
   void visit(const operation::HashtableLookup &node) override;
   void visit(const operation::Pack &node) override;
   void visit(const operation::Pad &node) override;
   void visit(const operation::Rank &node) override;
   void visit(const operation::ResizeBilinear &node) override;
   void visit(const operation::Reverse &node) override;
+  void visit(const operation::RoPE &node) override;
   void visit(const operation::Select &node) override;
   void visit(const operation::Shape &node) override;
   void visit(const operation::Slice &node) override;

@@ -31,7 +31,7 @@ namespace core
 
 class OMRuntimeModule
 {
-private:
+protected:
   std::vector<OMRuntimeGraph> _graphs;
 
 public:
@@ -43,7 +43,7 @@ public:
   ~OMRuntimeModule() = default;
 
   OMStatus importModel(const char *model_ptr, const OMConfig &config);
-  OMStatus run();
+  OMStatus run(const OMConfig &config);
   OMStatus reset();
 
   uint32_t getNumberOfInputs();
